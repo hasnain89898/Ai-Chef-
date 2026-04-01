@@ -1,0 +1,160 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile and taste preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "preferredCuisine": { "type": "string" },
+        "imageUploadCount": { "type": "number" },
+        "lastImageUploadAt": { "type": "string", "format": "date-time" },
+        "tasteDNA": {
+          "type": "object",
+          "properties": {
+            "sweetness": { "type": "number" },
+            "saltiness": { "type": "number" },
+            "spiciness": { "type": "number" },
+            "umami": { "type": "number" },
+            "acidity": { "type": "number" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "FridgeItem": {
+      "title": "Fridge Item",
+      "description": "An ingredient in the user's fridge",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "A generated or saved recipe",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "ingredients": { "type": "array", "items": { "type": "string" } },
+        "instructions": { "type": "array", "items": { "type": "string" } },
+        "cuisine": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "time": { "type": "string" },
+        "nutrition": {
+          "type": "object",
+          "properties": {
+            "calories": { "type": "number" },
+            "protein": { "type": "string" },
+            "carbs": { "type": "string" },
+            "fat": { "type": "string" }
+          }
+        },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "ingredients", "instructions"]
+    },
+    "MoodCraving": {
+      "title": "Mood Craving",
+      "description": "A predicted craving based on mood",
+      "type": "object",
+      "properties": {
+        "mood": { "type": "string" },
+        "weather": { "type": "string" },
+        "predictedDish": { "type": "string" },
+        "confidence": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["mood", "predictedDish"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "A message in the AI chef chat",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "content": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["role", "content"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "User subscription status",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["free", "pro"] },
+        "plan": { "type": "string", "enum": ["monthly", "yearly", "none"] },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["status"]
+    },
+    "MealPlan": {
+      "title": "Meal Plan",
+      "description": "A planned meal for a specific date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "mealType": { "type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"] },
+        "recipeId": { "type": "string" },
+        "recipeTitle": { "type": "string" }
+      },
+      "required": ["date", "mealType", "recipeTitle"]
+    },
+    "GroceryItem": {
+      "title": "Grocery Item",
+      "description": "An item in the user's grocery list",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "checked": { "type": "boolean" },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/users/{userId}/fridge/{itemId}": {
+      "schema": "FridgeItem",
+      "description": "Ingredients in the user's fridge"
+    },
+    "/users/{userId}/recipes/{recipeId}": {
+      "schema": "Recipe",
+      "description": "User's saved recipes"
+    },
+    "/users/{userId}/cravings/{cravingId}": {
+      "schema": "MoodCraving",
+      "description": "Historical mood-based cravings"
+    },
+    "/users/{userId}/chat/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "AI chef chat history"
+    },
+    "/users/{userId}/subscription/status": {
+      "schema": "Subscription",
+      "description": "User subscription status"
+    },
+    "/users/{userId}/mealPlan/{planId}": {
+      "schema": "MealPlan",
+      "description": "User's weekly meal plan"
+    },
+    "/users/{userId}/groceryList/{itemId}": {
+      "schema": "GroceryItem",
+      "description": "User's grocery list"
+    }
+  }
+}

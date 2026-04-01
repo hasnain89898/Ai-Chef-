@@ -1,0 +1,5 @@
+{
+  "name": "ChefAI: Personal Culinary Assistant",
+  "description": "An AI-powered personal chef that manages your fridge, predicts cravings, and generates personalized recipes based on your Taste DNA.",
+  "requestFramePermissions": ["microphone"]
+}
