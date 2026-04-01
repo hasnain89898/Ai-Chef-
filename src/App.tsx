@@ -1358,6 +1358,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceLang, setVoiceLang] = useState('en-US');
   const [isTyping, setIsTyping] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ file: File, preview: string } | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -1509,7 +1510,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     window.speechSynthesis.speak(utterance);
   };
 
-  const startListening = () => {
+  const startListening = (lang?: string) => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
@@ -1520,7 +1521,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = lang || voiceLang;
 
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
@@ -1652,6 +1653,20 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
             >
               {voiceMode ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </Button>
+            {voiceMode && (
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                onClick={() => {
+                  const newLang = voiceLang === 'en-US' ? 'ur-PK' : 'en-US';
+                  setVoiceLang(newLang);
+                  if (voiceMode) startListening(newLang);
+                }}
+                className="text-[10px] font-bold"
+              >
+                {voiceLang === 'en-US' ? 'EN' : 'UR'}
+              </Button>
+            )}
             <input
               type="text"
               value={input}
