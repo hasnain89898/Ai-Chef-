@@ -100,15 +100,17 @@ const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HT
       lg: 'px-6 py-3 text-lg font-medium',
     };
     return (
-      <button
+      <motion.button
         ref={ref}
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
         className={cn(
-          'inline-flex items-center justify-center rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95',
+          'inline-flex items-center justify-center rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed',
           variants[variant],
           sizes[size],
           className
         )}
-        {...props}
+        {...props as any}
       />
     );
   }
@@ -342,23 +344,33 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 pt-24 pb-12">
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            user={user} 
-            fridgeItems={fridgeItems} 
-            cravings={cravings} 
-            userProfile={userProfile} 
-            onNavigate={(tab) => setActiveTab(tab)}
-            subscription={subscription}
-          />
-        )}
-        {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} />}
-        {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} />}
-        {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} />}
-        {activeTab === 'chat' && <ChefChat user={user} messages={chatMessages} fridgeItems={fridgeItems} savedRecipes={savedRecipes} profile={userProfile} onUpgrade={() => setActiveTab('subscription')} />}
-        {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
-        {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
-        {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} />}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3 }}
+          >
+            {activeTab === 'dashboard' && (
+              <Dashboard 
+                user={user} 
+                fridgeItems={fridgeItems} 
+                cravings={cravings} 
+                userProfile={userProfile} 
+                onNavigate={(tab) => setActiveTab(tab)}
+                subscription={subscription}
+              />
+            )}
+            {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} />}
+            {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} />}
+            {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} />}
+            {activeTab === 'chat' && <ChefChat user={user} messages={chatMessages} fridgeItems={fridgeItems} savedRecipes={savedRecipes} profile={userProfile} onUpgrade={() => setActiveTab('subscription')} />}
+            {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
+            {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
+            {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} />}
+          </motion.div>
+        </AnimatePresence>
       </main>
     </div>
   );
@@ -395,17 +407,37 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <motion.div
             initial={{ opacity: 0, x: -50 }}
-            animate={{ opacity: 1, x: 0 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.8 }}
           >
-            <Badge className="mb-6">AI-Powered Culinary Intelligence</Badge>
-            <h1 className="text-6xl md:text-8xl font-bold tracking-tight leading-[0.9] mb-8">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.2 }}
+            >
+              <Badge className="mb-6">AI-Powered Culinary Intelligence</Badge>
+            </motion.div>
+            <motion.h1 
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.3 }}
+              className="text-6xl md:text-8xl font-bold tracking-tight leading-[0.9] mb-8"
+            >
               Your Personal <br />
               <span className="text-orange-600">Digital Chef.</span>
-            </h1>
-            <p className="text-xl text-zinc-400 max-w-lg mb-10 leading-relaxed">
+            </motion.h1>
+            <motion.p 
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.4 }}
+              className="text-xl text-zinc-400 max-w-lg mb-10 leading-relaxed"
+            >
               ChefAI manages your kitchen, predicts your cravings, and crafts professional recipes tailored to your unique Taste DNA.
-            </p>
+            </motion.p>
             <div className="flex flex-wrap gap-4">
               <Button size="lg" onClick={onLogin} className="rounded-full px-10">
                 Start Cooking <ArrowRight className="ml-2 w-5 h-5" />
@@ -415,21 +447,37 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
               </Button>
             </div>
 
-            <div className="mt-16 flex items-center gap-8">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              whileInView={{ opacity: 1 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.6 }}
+              className="mt-16 flex items-center gap-8"
+            >
               <div className="flex -space-x-3">
                 {[1, 2, 3, 4].map(i => (
-                  <img key={i} src={`https://picsum.photos/seed/user${i}/100/100`} className="w-10 h-10 rounded-full border-2 border-black" alt="" />
+                  <motion.img 
+                    key={i} 
+                    initial={{ scale: 0 }}
+                    whileInView={{ scale: 1 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: 0.6 + (i * 0.1) }}
+                    src={`https://picsum.photos/seed/user${i}/100/100`} 
+                    className="w-10 h-10 rounded-full border-2 border-black" 
+                    alt="" 
+                  />
                 ))}
               </div>
               <p className="text-sm text-zinc-500">
                 <span className="text-white font-bold">10k+</span> chefs already using ChefAI
               </p>
-            </div>
+            </motion.div>
           </motion.div>
 
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
             transition={{ duration: 1 }}
             className="relative"
           >
@@ -439,7 +487,13 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
                 className="rounded-2xl w-full aspect-[4/5] object-cover" 
                 alt="Chef cooking" 
               />
-              <div className="absolute -bottom-6 -left-6 bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl max-w-[240px]">
+              <motion.div 
+                initial={{ x: -20, opacity: 0 }}
+                whileInView={{ x: 0, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ delay: 0.8 }}
+                className="absolute -bottom-6 -left-6 bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl max-w-[240px]"
+              >
                 <div className="flex items-center gap-3 mb-4">
                   <div className="p-2 bg-orange-600/20 rounded-lg">
                     <Brain className="w-5 h-5 text-orange-500" />
@@ -448,7 +502,7 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
                 </div>
                 <p className="text-xs text-zinc-400 mb-2">Based on your mood and the rainy weather, you might be craving:</p>
                 <p className="text-lg font-bold text-orange-500">Creamy Mushroom Risotto</p>
-              </div>
+              </motion.div>
             </div>
             {/* Decorative elements */}
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-orange-600/30 rounded-full blur-3xl" />
@@ -476,23 +530,40 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
 
 function NavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
-    <button
+    <motion.button
       onClick={onClick}
+      whileHover={{ y: -2 }}
+      whileTap={{ y: 0 }}
       className={cn(
-        'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200',
+        'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 relative',
         active ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
       )}
     >
       {icon}
       {label}
-    </button>
+      {active && (
+        <motion.div
+          layoutId="activeNavGlow"
+          className="absolute inset-0 bg-orange-600/20 blur-xl rounded-xl -z-20"
+          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+        />
+      )}
+      {active && (
+        <motion.div
+          layoutId="activeNav"
+          className="absolute inset-0 bg-orange-600 rounded-xl -z-10"
+          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+        />
+      )}
+    </motion.button>
   );
 }
 
 function MobileNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
-    <button
+    <motion.button
       onClick={onClick}
+      whileTap={{ scale: 0.95 }}
       className={cn(
         'flex items-center gap-4 px-4 py-4 rounded-2xl text-lg font-medium transition-all duration-200',
         active ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:bg-zinc-900'
@@ -500,7 +571,7 @@ function MobileNavButton({ active, onClick, icon, label }: { active: boolean, on
     >
       {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-6 h-6' })}
       {label}
-    </button>
+    </motion.button>
   );
 }
 
@@ -551,7 +622,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
 
       <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-6">
         {/* AI Prediction - Large Bento Item */}
-        <Card className="md:col-span-4 lg:col-span-4 relative overflow-hidden group min-h-[320px] flex flex-col justify-center">
+        <Card delay={0.1} className="md:col-span-4 lg:col-span-4 relative overflow-hidden group min-h-[320px] flex flex-col justify-center">
           <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
             <Brain className="w-48 h-48 text-orange-600" />
           </div>
@@ -585,7 +656,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Fridge Status - Medium Bento Item */}
-        <Card className="md:col-span-2 lg:col-span-2 flex flex-col justify-between overflow-hidden">
+        <Card delay={0.2} className="md:col-span-2 lg:col-span-2 flex flex-col justify-between overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-5">
             <Refrigerator className="w-24 h-24" />
           </div>
@@ -613,7 +684,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Taste DNA - Medium Bento Item */}
-        <Card className="md:col-span-3 lg:col-span-3">
+        <Card delay={0.3} className="md:col-span-3 lg:col-span-3">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <Brain className="w-5 h-5 text-orange-500" />
@@ -639,7 +710,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Recent History - Medium Bento Item */}
-        <Card className="md:col-span-3 lg:col-span-3">
+        <Card delay={0.4} className="md:col-span-3 lg:col-span-3">
           <div className="flex items-center gap-2 mb-6">
             <History className="w-5 h-5 text-orange-500" />
             <h3 className="text-xl font-bold">Recent Cravings</h3>
@@ -664,7 +735,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Subscription Status - Small Bento Item */}
-        <Card className={cn(
+        <Card delay={0.5} className={cn(
           "md:col-span-2 lg:col-span-2 flex flex-col justify-between border-2",
           subscription?.status === 'pro' ? "border-orange-600/20 bg-orange-600/5" : "border-zinc-800"
         )}>
@@ -691,7 +762,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Quick Actions - Small Bento Item */}
-        <Card className="md:col-span-2 lg:col-span-2 flex flex-col justify-between">
+        <Card delay={0.6} className="md:col-span-2 lg:col-span-2 flex flex-col justify-between">
           <h3 className="text-lg font-bold mb-4">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => onNavigate('chat')} className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-orange-600/50 transition-colors flex flex-col items-center gap-2">
@@ -714,7 +785,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
         </Card>
 
         {/* Stats - Small Bento Item */}
-        <Card className="md:col-span-2 lg:col-span-2 flex flex-col justify-center items-center text-center">
+        <Card delay={0.7} className="md:col-span-2 lg:col-span-2 flex flex-col justify-center items-center text-center">
           <div className="p-4 bg-orange-600/10 rounded-full mb-4">
             <Utensils className="w-8 h-8 text-orange-500" />
           </div>
@@ -812,13 +883,14 @@ function FridgeManager({ user, items }: { user: FirebaseUser, items: any[] }) {
 
       <div className="grid gap-3">
         <AnimatePresence mode="popLayout">
-          {items.map((item) => (
+          {items.map((item, i) => (
             <motion.div
               key={item.id}
               layout
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ delay: i * 0.05 }}
               className="flex items-center justify-between p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl group"
             >
               <div className="flex items-center gap-4">
@@ -1497,8 +1569,9 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
           {messages.map((msg, i) => (
             <motion.div
               key={i}
-              initial={{ opacity: 0, x: msg.role === 'user' ? 20 : -20 }}
-              animate={{ opacity: 1, x: 0 }}
+              initial={{ opacity: 0, y: 10, x: msg.role === 'user' ? 20 : -20 }}
+              animate={{ opacity: 1, y: 0, x: 0 }}
+              transition={{ delay: i * 0.05 }}
               className={cn(
                 "flex",
                 msg.role === 'user' ? "justify-end" : "justify-start"
@@ -1733,10 +1806,13 @@ function GroceryList({ user, items, isPro, onUpgrade }: { user: FirebaseUser, it
       </Card>
 
       <div className="space-y-2">
-        {items.map(item => (
+        {items.map((item, i) => (
           <motion.div
             key={item.id}
             layout
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
             className={cn(
               "flex items-center justify-between p-4 rounded-xl border transition-all",
               item.checked ? "bg-zinc-900/30 border-zinc-800 opacity-50" : "bg-zinc-900/50 border-zinc-800"
