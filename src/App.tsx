@@ -37,6 +37,7 @@ import {
   CreditCard,
   Mic,
   MicOff,
+  Volume2,
   Send,
   CheckCircle2,
   AlertCircle
@@ -701,6 +702,14 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
               <Search className="w-4 h-4 text-orange-500" />
               <span className="text-[10px] font-bold uppercase">Search</span>
             </button>
+            <a 
+              href="/ProjectDetails.docx" 
+              download 
+              className="col-span-2 p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-orange-600/50 transition-colors flex items-center justify-center gap-2"
+            >
+              <CreditCard className="w-4 h-4 text-orange-500" />
+              <span className="text-[10px] font-bold uppercase">Download Project Details (Word)</span>
+            </a>
           </div>
         </Card>
 
@@ -1326,7 +1335,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     return true;
   };
 
-  const handleSend = async (text?: string) => {
+  const handleSend = async (text?: string, isVoice: boolean = false) => {
     const messageText = text || input;
     if (!messageText.trim() && !selectedImage) return;
 
@@ -1334,8 +1343,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     if (selectedImage) {
       const canUpload = await checkImageLimit();
       if (!canUpload) {
-        const resetTime = new Date((profile?.lastImageUploadAt?.toDate?.() || new Date()).getTime() + 24 * 60 * 60 * 1000);
-        alert(`You’ve reached your free image upload limit (4 images). You can upgrade to the premium version for unlimited uploads, or try again after ${resetTime.toLocaleTimeString()}.`);
+        alert(`You’ve reached your free image upload limit (4 images). You can upgrade to the premium version for unlimited uploads, or try again after 24 hours.`);
         onUpgrade();
         return;
       }
@@ -1372,7 +1380,8 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
         role: 'user',
         content: messageText || (selectedImage ? "Analyzed an image" : ""),
         imageUrl: selectedImage?.preview || null,
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        isVoice: isVoice
       });
 
       const context = {
@@ -1391,27 +1400,34 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
 
       setSelectedImage(null);
 
-      // Voice output
-      const utterance = new SpeechSynthesisUtterance(response);
-      if (/[آ-ی]/.test(response)) {
-        utterance.lang = 'ur-PK';
-      } else {
-        utterance.lang = 'en-US';
+      // Voice output only if input was voice or voiceMode is active
+      if (isVoice || voiceMode) {
+        speakText(response);
       }
-
-      utterance.onend = () => {
-        if (voiceMode) {
-          startListening();
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
 
     } catch (error) {
       console.error('Chat error:', error);
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const speakText = (text: string) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (/[آ-ی]/.test(text)) {
+      utterance.lang = 'ur-PK';
+    } else {
+      utterance.lang = 'en-US';
+    }
+
+    utterance.onend = () => {
+      if (voiceMode) {
+        startListening();
+      }
+    };
+
+    window.speechSynthesis.speak(utterance);
   };
 
   const startListening = () => {
@@ -1431,7 +1447,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     recognition.onend = () => setIsListening(false);
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      handleSend(transcript);
+      handleSend(transcript, true);
     };
 
     recognitionRef.current = recognition;
@@ -1489,7 +1505,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
               )}
             >
               <div className={cn(
-                "max-w-[80%] p-3 rounded-2xl space-y-2",
+                "max-w-[80%] p-3 rounded-2xl space-y-2 relative group",
                 msg.role === 'user' 
                   ? "bg-orange-600 text-white rounded-tr-none" 
                   : "bg-zinc-800 text-zinc-100 rounded-tl-none"
@@ -1498,6 +1514,15 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
                   <img src={msg.imageUrl} alt="Uploaded" className="rounded-lg max-h-48 w-full object-cover border border-white/10" />
                 )}
                 <p className="text-sm leading-relaxed">{msg.content}</p>
+                {msg.role === 'model' && (
+                  <button 
+                    onClick={() => speakText(msg.content)}
+                    className="absolute -right-8 top-0 p-2 text-zinc-500 hover:text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Speak response"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </motion.div>
           ))}
