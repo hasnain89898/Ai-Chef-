@@ -33,6 +33,7 @@ import {
   Instagram,
   MessageSquare,
   Calendar,
+  Image as ImageIcon,
   ShoppingCart,
   CreditCard,
   Mic,
@@ -77,6 +78,7 @@ import {
   limit 
 } from 'firebase/firestore';
 import { generateRecipe, predictCraving, analyzeTasteDNA, chatWithChef, searchRecipeByName, Recipe } from './services/geminiService';
+import { resizeImage } from './lib/imageUtils';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -1415,7 +1417,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     if (selectedImage) {
       const canUpload = await checkImageLimit();
       if (!canUpload) {
-        alert(`You’ve reached your free image upload limit (4 images). You can upgrade to the premium version for unlimited uploads, or try again after 24 hours.`);
+        alert("You’ve reached your free image upload limit (4 images). Upgrade to premium or try again after 24 hours.");
         onUpgrade();
         return;
       }
@@ -1427,10 +1429,15 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     try {
       const chatRef = collection(db, 'users', user.uid, 'chat');
       let imageData: { data: string, mimeType: string } | undefined;
+      let displayImageUrl: string | null = null;
 
       if (selectedImage) {
-        const base64Data = selectedImage.preview.split(',')[1];
-        imageData = { data: base64Data, mimeType: selectedImage.file.type };
+        // Resize image for Firestore (stay under 1MB)
+        const resizedBase64 = await resizeImage(selectedImage.preview, 800, 800, 0.7);
+        displayImageUrl = resizedBase64;
+
+        const base64Data = resizedBase64.split(',')[1];
+        imageData = { data: base64Data, mimeType: 'image/jpeg' };
         
         // Update image upload count
         const now = new Date();
@@ -1451,7 +1458,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
       await addDoc(chatRef, {
         role: 'user',
         content: messageText || (selectedImage ? "Analyzed an image" : ""),
-        imageUrl: selectedImage?.preview || null,
+        imageUrl: displayImageUrl,
         timestamp: serverTimestamp(),
         isVoice: isVoice
       });
@@ -1635,7 +1642,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
               size="sm" 
               onClick={() => fileInputRef.current?.click()}
             >
-              <Refrigerator className="w-4 h-4" />
+              <ImageIcon className="w-4 h-4" />
             </Button>
             <Button 
               variant={voiceMode ? 'primary' : 'secondary'} 

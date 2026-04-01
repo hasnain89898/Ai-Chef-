@@ -1,6 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || 
+               (import.meta.env?.VITE_GEMINI_API_KEY) || 
+               '';
+
+const ai = new GoogleGenAI({ apiKey });
 
 export interface Recipe {
   title: string;
@@ -116,25 +120,14 @@ export async function chatWithChef(
     - User Preferences: ${context.profile?.preferredCuisine || 'None'}
   ` : '';
 
-  const systemInstruction = `You are "Chef AI", a smart multimodal conversational assistant.
-  - You understand and respond to text, voice, and image inputs.
-  - Core Behavior: Always analyze the user's latest input and respond accordingly. Accept input from typing, voice, or uploaded images.
-  - Generate dynamic, context-aware responses every time. Avoid fixed or repetitive replies.
-  - Follow the user's intent and topic.
-  - Input-Output Mode Rules:
-    - If the user input is voice, respond in voice format (speech-friendly response).
-    - If the user input is text, respond in text format.
-    - Keep voice responses short and natural for speaking.
-    - Do not force voice output when user typed text unless user presses speak option.
-  - Text Interaction: Respond naturally and conversationally. Match the tone and language of the user. Support both Urdu and English.
-  - Voice Interaction: Use short, clear, and conversational sentences. Make responses easy to speak. Avoid long paragraphs in voice responses.
-  - Image Interaction:
-    - If user uploads food image → identify dish and provide info or recipe.
-    - If user uploads ingredients → suggest possible recipes.
-    - If image is unrelated → respond based on visible content.
-    - Never ignore uploaded images.
-  - General Rules: Always respond according to user input. Do not restrict responses to predefined topics. Avoid generic responses. Be helpful, polite, and human-like. Follow topic changes instantly. Keep responses concise but useful.
-  ${contextPrompt}`;
+  const systemInstruction = `You are "Chef AI", a fast, smart multimodal assistant.
+  - Respond DIRECTLY and CONCISELY to the latest input.
+  - No unnecessary explanations. Keep it short and dynamic.
+  - Support Urdu and English naturally.
+  - If input is voice (isVoice: true), keep response very short for speech.
+  - If image is provided, analyze it immediately and respond to it.
+  - Follow topic changes instantly. Do not repeat yourself.
+  - Context: Fridge: ${context?.fridge.join(', ') || 'Empty'}, Recipes: ${context?.recipes.join(', ') || 'None'}.`;
 
   const contents: any[] = history.map(h => {
     const parts: any[] = [{ text: h.content }];
