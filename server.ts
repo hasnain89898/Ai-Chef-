@@ -7,7 +7,13 @@ import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import Stripe from "stripe";
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+const isValidStripeKey = stripeKey && (stripeKey.startsWith('sk_test_') || stripeKey.startsWith('sk_live_'));
+const stripe = isValidStripeKey ? new Stripe(stripeKey) : null;
+
+if (stripeKey && !isValidStripeKey) {
+  console.warn("Invalid STRIPE_SECRET_KEY format. Falling back to mock payments for development.");
+}
 
 const getAppUrl = (req: express.Request) => {
   if (process.env.APP_URL) return process.env.APP_URL;
@@ -217,8 +223,21 @@ async function startServer() {
   }));
 
   app.get("/api/payment-success", asyncHandler(async (req, res) => {
-    const { userId, plan } = req.query;
+    const { userId, plan, session_id } = req.query;
     if (!userId) return res.status(400).send("User ID is required");
+
+    // If Stripe is available and we have a session_id, verify it
+    if (stripe && session_id && typeof session_id === 'string') {
+      try {
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        if (session.payment_status !== 'paid') {
+          return res.status(400).send("Payment not completed");
+        }
+      } catch (error: any) {
+        console.error("Stripe session verification failed:", error);
+        return res.status(400).send("Invalid payment session");
+      }
+    }
 
     // Update subscription in DB
     db.prepare("INSERT OR REPLACE INTO subscriptions (user_id, status, plan, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)").run(userId, 'pro', plan);

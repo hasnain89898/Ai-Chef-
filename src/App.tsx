@@ -959,7 +959,15 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
           <Card key={recipe.id}>
             <div className="flex justify-between items-start mb-4">
               <h4 className="text-xl font-bold">{recipe.title}</h4>
-              <Button variant="ghost" size="sm" onClick={() => api.deleteRecipe(recipe.id).then(onRefresh)}>
+              <Button variant="ghost" size="sm" onClick={async () => {
+                try {
+                  await api.deleteRecipe(recipe.id);
+                  onRefresh();
+                } catch (e: any) {
+                  console.error(e);
+                  onError(e.message || "Failed to delete recipe");
+                }
+              }}>
                 <Trash2 className="w-4 h-4 text-red-500" />
               </Button>
             </div>
@@ -1063,14 +1071,19 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
       return;
     }
 
-    try {
-      const base64 = await resizeImage(file, 1920, 1080);
-      setChatBackground(base64);
-      localStorage.setItem('chefai_chat_bg', base64);
-    } catch (err) {
-      console.error(err);
-      onError("Failed to upload background image.");
-    }
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      try {
+        const resizedBase64 = await resizeImage(base64, 1920, 1080);
+        setChatBackground(resizedBase64);
+        localStorage.setItem('chefai_chat_bg', resizedBase64);
+      } catch (err) {
+        console.error(err);
+        onError("Failed to upload background image.");
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const clearBg = () => {
@@ -1154,24 +1167,6 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
     reader.readAsDataURL(file);
   };
 
-  const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setChatBackground(base64);
-      localStorage.setItem('chefai_chat_bg', base64);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const clearBackground = () => {
-    setChatBackground(null);
-    localStorage.removeItem('chefai_chat_bg');
-  };
-
   const handleSend = async (overrideInput?: string) => {
     const currentInput = overrideInput || input;
     if (!currentInput && !selectedImage) return;
@@ -1213,7 +1208,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
 
   return (
     <Card 
-      className="h-[650px] flex flex-col overflow-hidden border-zinc-800/50 relative"
+      className="h-[650px] flex flex-col overflow-hidden border-zinc-800/50 relative group/chat"
       style={chatBackground ? { 
         backgroundImage: `url(${chatBackground})`, 
         backgroundSize: 'cover', 
@@ -1221,6 +1216,58 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
       } : { backgroundColor: 'rgb(9 9 11 / 0.4)' }}
     >
       {chatBackground && <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-0" />}
+      
+      <div className="flex items-center justify-between mb-6 relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-orange-600/20 rounded-xl flex items-center justify-center">
+            <ChefHat className="w-6 h-6 text-orange-600" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold">Chef AI</h3>
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Online</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input 
+            type="file" 
+            ref={bgInputRef} 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handleBgUpload} 
+          />
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => bgInputRef.current?.click()}
+            title="Change Chat Background"
+            className="rounded-full w-8 h-8 p-0"
+          >
+            <ImageIcon className="w-4 h-4" />
+          </Button>
+          {chatBackground && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={clearBg}
+              title="Clear Background"
+              className="rounded-full w-8 h-8 p-0 text-red-500 hover:text-red-400"
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={onRefresh}
+            className="rounded-full w-8 h-8 p-0"
+          >
+            <History className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
       
       <div className="flex-1 overflow-y-auto space-y-6 mb-4 pr-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent relative z-10">
         {messages.length === 0 && (
@@ -1331,13 +1378,6 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
             ref={fileInputRef} 
             onChange={handleImageUpload}
           />
-          <input 
-            type="file" 
-            accept="image/*" 
-            className="hidden" 
-            ref={bgInputRef} 
-            onChange={handleBackgroundUpload}
-          />
           <Button 
             variant="ghost" 
             size="sm" 
@@ -1347,26 +1387,6 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
           >
             <ImageIcon className="w-5 h-5" />
           </Button>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => bgInputRef.current?.click()}
-            className="h-10 w-10 p-0 rounded-xl hover:bg-zinc-800"
-            title="Set Chat Background"
-          >
-            <Sparkles className="w-5 h-5" />
-          </Button>
-          {chatBackground && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={clearBackground}
-              className="h-10 w-10 p-0 rounded-xl hover:bg-red-900/20 text-red-500"
-              title="Clear Background"
-            >
-              <Trash2 className="w-5 h-5" />
-            </Button>
-          )}
           <Button 
             variant="ghost" 
             size="sm" 
@@ -1494,7 +1514,15 @@ function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade, onRefresh, o
                 <p className="text-xs text-zinc-500">{plan.meal_type}</p>
               </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => api.deleteMealPlan(plan.id).then(onRefresh)}>
+            <Button variant="ghost" size="sm" onClick={async () => {
+              try {
+                await api.deleteMealPlan(plan.id);
+                onRefresh();
+              } catch (e: any) {
+                console.error(e);
+                onError(e.message || "Failed to delete meal plan");
+              }
+            }}>
               <Trash2 className="w-4 h-4 text-red-500" />
             </Button>
           </Card>
