@@ -26,6 +26,7 @@ import {
   Github,
   Twitter,
   Instagram,
+  Linkedin,
   MessageSquare,
   Calendar,
   Image as ImageIcon,
@@ -89,12 +90,13 @@ const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HT
   }
 );
 
-const Card = ({ children, className, delay = 0 }: { children: React.ReactNode, className?: string, delay?: number }) => (
+const Card = ({ children, className, delay = 0, style }: { children: React.ReactNode, className?: string, delay?: number, style?: React.CSSProperties }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ duration: 0.4, delay }}
     className={cn('bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur-xl', className)}
+    style={style}
   >
     {children}
   </motion.div>
@@ -111,13 +113,14 @@ const Badge = ({ children, className }: { children: React.ReactNode, className?:
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'fridge' | 'recipes' | 'dna' | 'chat' | 'meal-plan' | 'grocery' | 'subscription'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'fridge' | 'recipes' | 'dna' | 'chat' | 'meal-plan' | 'grocery' | 'subscription' | 'about' | 'privacy' | 'contact' | 'terms'>('dashboard');
   const [fridgeItems, setFridgeItems] = useState<any[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<any[]>([]);
   const [cravings, setCravings] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [mealPlans, setMealPlans] = useState<any[]>([]);
@@ -145,6 +148,32 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    // Check for Stripe success/cancel
+    if (!user) return;
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success') === 'true';
+    const canceled = urlParams.get('canceled') === 'true';
+
+    if (success) {
+      setSuccessMessage("Pro plan activated successfully.");
+      fetchUserData(user);
+      // Clean up URL
+      const newUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+      setTimeout(() => setSuccessMessage(null), 5000);
+    }
+    
+    if (canceled) {
+      setConnectionError("Payment was canceled.");
+      // Clean up URL
+      const newUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+      setTimeout(() => setConnectionError(null), 5000);
+    }
+  }, [user]);
 
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [pendingTargetTab, setPendingTargetTab] = useState<string | null>(null);
@@ -179,10 +208,11 @@ export default function App() {
       setMealPlans(meal);
       setGroceryList(grocery);
       setLoading(false);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to fetch user data', e);
-      setConnectionError("Unable to load your kitchen data. Please try again later.");
+      setConnectionError(e.message || "Unable to load your kitchen data. Please try again later.");
       setLoading(false);
+      setTimeout(() => setConnectionError(null), 5000);
     }
   };
 
@@ -216,12 +246,12 @@ export default function App() {
       
       setIsLoginModalOpen(false);
       await fetchUserData(u);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Login/Navigation failed', e);
-      if (retryCount < 1) {
+      if (retryCount < 1 && e.message?.includes('Network error')) {
         return handleLogin(email, retryCount + 1);
       }
-      setConnectionError("Navigation error. Please refresh or try again.");
+      setConnectionError(e.message || "Navigation error. Please refresh or try again.");
       setTimeout(() => setConnectionError(null), 5000);
     }
   }, [fetchUserData, pendingTargetTab]);
@@ -270,6 +300,12 @@ export default function App() {
         <div className="fixed top-0 left-0 right-0 z-[100] bg-red-600 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
           <AlertCircle className="w-4 h-4" />
           {connectionError}
+        </div>
+      )}
+      {successMessage && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-green-600 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+          <CheckCircle2 className="w-4 h-4" />
+          {successMessage}
         </div>
       )}
       {/* Navigation */}
@@ -360,12 +396,48 @@ export default function App() {
                 userProfile={userProfile} 
                 onNavigate={(tab) => setActiveTab(tab)}
                 subscription={subscription}
-                onRefresh={() => fetchUserData(user.id)}
+                onRefresh={() => fetchUserData(user)}
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
               />
             )}
-            {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} onRefresh={() => fetchUserData(user.id)} />}
-            {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
-            {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'fridge' && (
+              <FridgeManager 
+                user={user} 
+                items={fridgeItems} 
+                onRefresh={() => fetchUserData(user)}
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+              />
+            )}
+            {activeTab === 'recipes' && (
+              <RecipeExplorer 
+                user={user} 
+                fridgeItems={fridgeItems} 
+                savedRecipes={savedRecipes} 
+                userProfile={userProfile} 
+                onRefresh={() => fetchUserData(user)}
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+              />
+            )}
+            {activeTab === 'dna' && (
+              <TasteDNA 
+                user={user} 
+                profile={userProfile} 
+                onRefresh={() => fetchUserData(user)}
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+              />
+            )}
             {activeTab === 'chat' && (
               <ChefChat 
                 user={user} 
@@ -373,20 +445,53 @@ export default function App() {
                 fridgeItems={fridgeItems} 
                 savedRecipes={savedRecipes} 
                 profile={userProfile} 
+                subscription={subscription}
                 onUpgrade={() => setActiveTab('subscription')} 
-                onRefresh={() => fetchUserData(user.id)} 
+                onRefresh={() => fetchUserData(user)} 
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+                setMessages={setChatMessages}
+              />
+            )}
+            {activeTab === 'meal-plan' && (
+              <MealPlanner 
+                user={user} 
+                plans={mealPlans} 
+                savedRecipes={savedRecipes} 
+                isPro={subscription?.status === 'pro'} 
+                onUpgrade={() => setActiveTab('subscription')} 
+                onRefresh={() => fetchUserData(user)}
                 onError={(msg) => {
                   setConnectionError(msg);
                   setTimeout(() => setConnectionError(null), 5000);
                 }}
               />
             )}
-            {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
-            {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
-            {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'grocery' && (
+              <GroceryList 
+                user={user} 
+                items={groceryList} 
+                isPro={subscription?.status === 'pro'} 
+                onUpgrade={() => setActiveTab('subscription')} 
+                onRefresh={() => fetchUserData(user)}
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+              />
+            )}
+            {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} onRefresh={() => fetchUserData(user)} />}
+            {activeTab === 'about' && <AboutUs />}
+            {activeTab === 'privacy' && <PrivacyPolicy />}
+            {activeTab === 'terms' && <TermsOfService />}
+            {activeTab === 'contact' && <ContactUs />}
           </motion.div>
         </AnimatePresence>
       </main>
+
+      <Footer onNavigate={(tab) => setActiveTab(tab)} />
     </div>
   );
 }
@@ -492,6 +597,8 @@ function LandingPage({ onLogin }: { onLogin: (targetTab?: string) => void }) {
           </motion.div>
         </div>
       </main>
+
+      <Footer onNavigate={(tab) => onLogin(tab)} />
     </div>
   );
 }
@@ -526,7 +633,7 @@ function MobileNavButton({ active, onClick, icon, label }: { active: boolean, on
   );
 }
 
-function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subscription, onRefresh }: { user: any, fridgeItems: any[], cravings: any[], userProfile: any, onNavigate: (tab: any) => void, subscription: any, onRefresh: () => void }) {
+function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subscription, onRefresh, onError }: { user: any, fridgeItems: any[], cravings: any[], userProfile: any, onNavigate: (tab: any) => void, subscription: any, onRefresh: () => void, onError: (msg: string) => void }) {
   const [prediction, setPrediction] = useState<any>(null);
   const [isPredicting, setIsPredicting] = useState(false);
 
@@ -547,8 +654,9 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
       await api.addCraving(user.id, cravingData);
       setPrediction(cravingData);
       onRefresh();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      onError(e.message || "Failed to predict craving");
     } finally {
       setIsPredicting(false);
     }
@@ -562,6 +670,16 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           <p className="text-zinc-500">Ready to cook something amazing today?</p>
         </div>
         <div className="flex items-center gap-4 text-sm text-zinc-400">
+          {subscription?.status !== 'pro' && (
+            <Button 
+              size="sm" 
+              variant="primary" 
+              className="bg-gradient-to-r from-orange-600 to-orange-700 shadow-lg shadow-orange-600/20"
+              onClick={() => onNavigate('subscription')}
+            >
+              Upgrade to Pro
+            </Button>
+          )}
           <div className="flex items-center gap-2">
             <Sun className="w-4 h-4 text-yellow-500" />
             <span>72°F Sunny</span>
@@ -688,19 +806,29 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
   );
 }
 
-function FridgeManager({ user, items, onRefresh }: { user: any, items: any[], onRefresh: () => void }) {
+function FridgeManager({ user, items, onRefresh, onError }: { user: any, items: any[], onRefresh: () => void, onError: (msg: string) => void }) {
   const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'pcs' });
 
   const handleAdd = async () => {
     if (!newItem.name) return;
-    await api.addFridgeItem(user.id, newItem);
-    setNewItem({ name: '', quantity: '', unit: 'pcs' });
-    onRefresh();
+    try {
+      await api.addFridgeItem(user.id, newItem);
+      setNewItem({ name: '', quantity: '', unit: 'pcs' });
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to add item to fridge");
+    }
   };
 
   const handleDelete = async (id: number) => {
-    await api.deleteFridgeItem(id);
-    onRefresh();
+    try {
+      await api.deleteFridgeItem(id);
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to delete item from fridge");
+    }
   };
 
   return (
@@ -754,13 +882,13 @@ function FridgeManager({ user, items, onRefresh }: { user: any, items: any[], on
   );
 }
 
-function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefresh }: { user: any, fridgeItems: any[], savedRecipes: any[], userProfile: any, onRefresh: () => void }) {
+function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefresh, onError }: { user: any, fridgeItems: any[], savedRecipes: any[], userProfile: any, onRefresh: () => void, onError: (msg: string) => void }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRecipe, setGeneratedRecipe] = useState<Recipe | null>(null);
 
   const handleGenerate = async () => {
     if (fridgeItems.length === 0) {
-      alert("Add some items to your fridge first!");
+      onError("Add some items to your fridge first!");
       return;
     }
     setIsGenerating(true);
@@ -768,8 +896,9 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
       const ingredients = fridgeItems.map(i => i.name);
       const recipe = await generateRecipe(ingredients, userProfile?.preferred_cuisine);
       setGeneratedRecipe(recipe);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      onError(e.message || "Failed to generate recipe");
     } finally {
       setIsGenerating(false);
     }
@@ -777,9 +906,14 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
 
   const handleSave = async () => {
     if (!generatedRecipe) return;
-    await api.saveRecipe(user.id, generatedRecipe);
-    setGeneratedRecipe(null);
-    onRefresh();
+    try {
+      await api.saveRecipe(user.id, generatedRecipe);
+      setGeneratedRecipe(null);
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to save recipe");
+    }
   };
 
   return (
@@ -841,7 +975,7 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
   );
 }
 
-function TasteDNA({ user, profile, onRefresh }: { user: any, profile: any, onRefresh: () => void }) {
+function TasteDNA({ user, profile, onRefresh, onError }: { user: any, profile: any, onRefresh: () => void, onError: (msg: string) => void }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [prefs, setPrefs] = useState('');
 
@@ -853,8 +987,9 @@ function TasteDNA({ user, profile, onRefresh }: { user: any, profile: any, onRef
       await api.updateUser(user.id, { taste_dna: dna });
       onRefresh();
       setPrefs('');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      onError(e.message || "Failed to analyze taste DNA");
     } finally {
       setIsAnalyzing(false);
     }
@@ -906,16 +1041,42 @@ function TasteDNA({ user, profile, onRefresh }: { user: any, profile: any, onRef
   );
 }
 
-function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrade, onRefresh, onError }: { user: any, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, onUpgrade: () => void, onRefresh: () => void, onError: (msg: string) => void }) {
+function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscription, onUpgrade, onRefresh, onError, setMessages }: { user: any, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, subscription: any, onUpgrade: () => void, onRefresh: () => void, onError: (msg: string) => void, setMessages: React.Dispatch<React.SetStateAction<any[]>> }) {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
+  const [chatBackground, setChatBackground] = useState<string | null>(localStorage.getItem('chefai_chat_bg'));
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const bgInputRef = React.useRef<HTMLInputElement>(null);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
-  const isPro = profile?.status === 'pro';
+  const isPro = subscription?.status === 'pro';
   const uploadCount = profile?.image_upload_count || 0;
+
+  const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+      onError("Please select an image file.");
+      return;
+    }
+
+    try {
+      const base64 = await resizeImage(file, 1920, 1080);
+      setChatBackground(base64);
+      localStorage.setItem('chefai_chat_bg', base64);
+    } catch (err) {
+      console.error(err);
+      onError("Failed to upload background image.");
+    }
+  };
+
+  const clearBg = () => {
+    setChatBackground(null);
+    localStorage.removeItem('chefai_chat_bg');
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -931,7 +1092,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   };
 
   const startListening = () => {
-    if (!('webkitSpeciesRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+    if (!('webkitSpeechRecognition' in window)) {
       onError("Speech recognition not supported in this browser.");
       return;
     }
@@ -967,8 +1128,11 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     if (!file) return;
 
     if (!isPro && uploadCount >= 3) {
-      onError("You have reached the free limit of 3 image uploads. Upgrade to Pro to continue.");
-      onUpgrade();
+      setMessages(prev => [...prev, {
+        role: 'model',
+        content: "You have reached the free limit of 3 image uploads. Upgrade to Pro to unlock unlimited uploads and premium features!",
+        showUpgrade: true
+      }]);
       return;
     }
 
@@ -990,11 +1154,33 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     reader.readAsDataURL(file);
   };
 
+  const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setChatBackground(base64);
+      localStorage.setItem('chefai_chat_bg', base64);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearBackground = () => {
+    setChatBackground(null);
+    localStorage.removeItem('chefai_chat_bg');
+  };
+
   const handleSend = async (overrideInput?: string) => {
     const currentInput = overrideInput || input;
     if (!currentInput && !selectedImage) return;
     
-    const userMsg = { role: 'user' as const, content: currentInput || "Sent an image" };
+    const userMsg = { 
+      role: 'user' as const, 
+      content: currentInput || "Sent an image",
+      imageUrl: selectedImage?.data 
+    };
     await api.addChatMessage(user.id, userMsg);
     
     if (selectedImage) {
@@ -1026,8 +1212,17 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   };
 
   return (
-    <Card className="h-[650px] flex flex-col overflow-hidden border-zinc-800/50 bg-zinc-950/40">
-      <div className="flex-1 overflow-y-auto space-y-6 mb-4 pr-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+    <Card 
+      className="h-[650px] flex flex-col overflow-hidden border-zinc-800/50 relative"
+      style={chatBackground ? { 
+        backgroundImage: `url(${chatBackground})`, 
+        backgroundSize: 'cover', 
+        backgroundPosition: 'center' 
+      } : { backgroundColor: 'rgb(9 9 11 / 0.4)' }}
+    >
+      {chatBackground && <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-0" />}
+      
+      <div className="flex-1 overflow-y-auto space-y-6 mb-4 pr-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent relative z-10">
         {messages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-50">
             <ChefHat className="w-12 h-12 mb-4 text-orange-600" />
@@ -1049,6 +1244,27 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
                 : "bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-tl-none"
             )}>
               {m.content}
+              {m.imageUrl && (
+                <div className="mt-2 rounded-lg overflow-hidden border border-zinc-800/50 bg-black/20">
+                  <img 
+                    src={m.imageUrl.startsWith('data:') ? m.imageUrl : `data:image/jpeg;base64,${m.imageUrl}`} 
+                    alt="Uploaded content" 
+                    className="max-w-full h-auto"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              )}
+              {m.showUpgrade && (
+                <div className="mt-4">
+                  <Button 
+                    size="sm" 
+                    className="w-full bg-white text-black hover:bg-zinc-200"
+                    onClick={onUpgrade}
+                  >
+                    Upgrade to Pro
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-3 mt-1.5 px-1">
               <span className="text-[9px] text-zinc-600 font-medium">
@@ -1106,7 +1322,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
         )}
       </AnimatePresence>
 
-      <div className="relative flex items-end gap-2 bg-zinc-900/50 p-2 rounded-2xl border border-zinc-800/50 focus-within:border-orange-600/50 transition-colors">
+      <div className="relative flex items-end gap-2 bg-zinc-900/50 p-2 rounded-2xl border border-zinc-800/50 focus-within:border-orange-600/50 transition-colors z-10">
         <div className="flex items-center">
           <input 
             type="file" 
@@ -1115,14 +1331,42 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
             ref={fileInputRef} 
             onChange={handleImageUpload}
           />
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={bgInputRef} 
+            onChange={handleBackgroundUpload}
+          />
           <Button 
             variant="ghost" 
             size="sm" 
             onClick={() => fileInputRef.current?.click()}
             className="h-10 w-10 p-0 rounded-xl hover:bg-zinc-800"
+            title="Upload Image"
           >
             <ImageIcon className="w-5 h-5" />
           </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => bgInputRef.current?.click()}
+            className="h-10 w-10 p-0 rounded-xl hover:bg-zinc-800"
+            title="Set Chat Background"
+          >
+            <Sparkles className="w-5 h-5" />
+          </Button>
+          {chatBackground && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={clearBackground}
+              className="h-10 w-10 p-0 rounded-xl hover:bg-red-900/20 text-red-500"
+              title="Clear Background"
+            >
+              <Trash2 className="w-5 h-5" />
+            </Button>
+          )}
           <Button 
             variant="ghost" 
             size="sm" 
@@ -1131,6 +1375,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
               "h-10 w-10 p-0 rounded-xl transition-all duration-300",
               isListening ? "bg-orange-600 text-white animate-pulse" : "hover:bg-zinc-800"
             )}
+            title="Voice Input"
           >
             {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </Button>
@@ -1169,13 +1414,28 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   );
 }
 
-function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade, onRefresh }: { user: any, plans: any[], savedRecipes: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void }) {
+function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade, onRefresh, onError }: { user: any, plans: any[], savedRecipes: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void, onError: (msg: string) => void }) {
   const [newPlan, setNewPlan] = useState({ recipe_id: 0, date: new Date().toISOString().split('T')[0], meal_type: 'Dinner' });
 
   const handleAdd = async () => {
     if (!newPlan.recipe_id) return;
-    await api.addMealPlan(user.id, newPlan);
-    onRefresh();
+    try {
+      await api.addMealPlan(user.id, newPlan);
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to add meal plan");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await api.deleteMealPlan(id);
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to delete meal plan");
+    }
   };
 
   if (!isPro) {
@@ -1244,14 +1504,19 @@ function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade, onRefresh }:
   );
 }
 
-function GroceryList({ user, items, isPro, onUpgrade, onRefresh }: { user: any, items: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void }) {
+function GroceryList({ user, items, isPro, onUpgrade, onRefresh, onError }: { user: any, items: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void, onError: (msg: string) => void }) {
   const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'pcs' });
 
   const handleAdd = async () => {
     if (!newItem.name) return;
-    await api.addGroceryItem(user.id, newItem);
-    setNewItem({ name: '', quantity: '', unit: 'pcs' });
-    onRefresh();
+    try {
+      await api.addGroceryItem(user.id, newItem);
+      setNewItem({ name: '', quantity: '', unit: 'pcs' });
+      onRefresh();
+    } catch (e: any) {
+      console.error(e);
+      onError(e.message || "Failed to add grocery item");
+    }
   };
 
   if (!isPro) {
@@ -1320,15 +1585,42 @@ function GroceryList({ user, items, isPro, onUpgrade, onRefresh }: { user: any, 
 }
 
 function SubscriptionPlans({ user, currentSub, onRefresh }: { user: any, currentSub: any, onRefresh: () => void }) {
+  const [isUpgrading, setIsUpgrading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const subStatus = currentSub?.status || 'free';
+
   const handleUpgrade = async (plan: string) => {
-    await api.updateSubscription(user.id, { status: 'pro', plan });
-    onRefresh();
+    try {
+      setIsUpgrading(plan);
+      setError(null);
+      const { url } = await api.createCheckoutSession(user.id, plan);
+      if (url) {
+        window.location.href = url;
+      }
+    } catch (err: any) {
+      console.error("Upgrade failed", err);
+      setError(err.message || "Failed to initiate upgrade. Please try again.");
+    } finally {
+      setIsUpgrading(null);
+    }
   };
 
   return (
-    <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-      <Card className={cn("relative", currentSub?.status === 'free' && "border-orange-600")}>
-        {currentSub?.status === 'free' && <Badge className="absolute top-4 right-4">Current Plan</Badge>}
+    <div className="space-y-8 max-w-4xl mx-auto">
+      {error && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl flex items-center gap-3"
+        >
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <p className="text-sm">{error}</p>
+        </motion.div>
+      )}
+      
+      <div className="grid md:grid-cols-2 gap-8">
+      <Card className={cn("relative", subStatus === 'free' && "border-orange-600")}>
+        {subStatus === 'free' && <Badge className="absolute top-4 right-4">Current Plan</Badge>}
         <h3 className="text-2xl font-bold mb-2">Free Tier</h3>
         <p className="text-4xl font-bold mb-6">$0<span className="text-lg text-zinc-500 font-normal">/mo</span></p>
         <ul className="space-y-4 mb-8 text-zinc-400">
@@ -1337,14 +1629,15 @@ function SubscriptionPlans({ user, currentSub, onRefresh }: { user: any, current
           <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Taste DNA Profile</li>
           <li className="flex items-center gap-2 text-zinc-600"><X className="w-4 h-4" /> Meal Planning</li>
           <li className="flex items-center gap-2 text-zinc-600"><X className="w-4 h-4" /> Grocery List Sync</li>
+          <li className="flex items-center gap-2 text-zinc-600"><X className="w-4 h-4" /> Unlimited Image Uploads</li>
         </ul>
-        <Button variant="secondary" className="w-full" disabled={currentSub?.status === 'free'}>
-          {currentSub?.status === 'free' ? 'Active' : 'Downgrade'}
+        <Button variant="secondary" className="w-full" disabled={subStatus === 'free'}>
+          {subStatus === 'free' ? 'Active' : 'Downgrade'}
         </Button>
       </Card>
 
-      <Card className={cn("relative border-2", currentSub?.status === 'pro' ? "border-orange-600" : "border-zinc-800")}>
-        {currentSub?.status === 'pro' && <Badge className="absolute top-4 right-4">Active</Badge>}
+      <Card className={cn("relative border-2", subStatus === 'pro' ? "border-orange-600" : "border-zinc-800")}>
+        {subStatus === 'pro' && <Badge className="absolute top-4 right-4">Active</Badge>}
         <h3 className="text-2xl font-bold mb-2">Pro Chef</h3>
         <p className="text-4xl font-bold mb-6">$9.99<span className="text-lg text-zinc-500 font-normal">/mo</span></p>
         <ul className="space-y-4 mb-8 text-zinc-400">
@@ -1352,12 +1645,231 @@ function SubscriptionPlans({ user, currentSub, onRefresh }: { user: any, current
           <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Advanced Meal Planning</li>
           <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Smart Grocery Sync</li>
           <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Priority AI Generation</li>
-          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Custom Taste DNA Tuning</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Unlimited Image Uploads</li>
         </ul>
-        <Button className="w-full" onClick={() => handleUpgrade('monthly')} disabled={currentSub?.status === 'pro'}>
-          {currentSub?.status === 'pro' ? 'Pro Active' : 'Upgrade to Pro'}
+        <Button 
+          className="w-full" 
+          onClick={() => handleUpgrade('monthly')} 
+          disabled={subStatus === 'pro' || isUpgrading !== null}
+        >
+          {subStatus === 'pro' ? 'Pro Active' : isUpgrading === 'monthly' ? 'Processing...' : 'Upgrade to Pro'}
         </Button>
       </Card>
     </div>
+  </div>
+  );
+}
+
+function Footer({ onNavigate }: { onNavigate: (tab: any) => void }) {
+  return (
+    <footer className="relative z-20 border-t border-zinc-800 bg-black/50 backdrop-blur-xl py-12 mt-auto">
+      <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-12">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <ChefHat className="w-6 h-6 text-orange-600" />
+            <span className="text-xl font-bold tracking-tighter text-white">CHEF<span className="text-orange-600">AI</span></span>
+          </div>
+          <p className="text-sm text-zinc-500">Your personal AI culinary assistant. Master your kitchen with the power of intelligence.</p>
+          <div className="flex items-center gap-4">
+            <a href="https://www.instagram.com/hasnain_naseer8?igsh=M3VtMGVrZHAwdWs5" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-orange-500 transition-colors">
+              <Instagram className="w-5 h-5" />
+            </a>
+            <a href="https://www.linkedin.com/in/hasnain-naseer-a33036399?utm_source=share_via&utm_content=profile&utm_medium=member_android" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-orange-500 transition-colors">
+              <Linkedin className="w-5 h-5" />
+            </a>
+            <a href="#" className="text-zinc-500 hover:text-orange-500 transition-colors">
+              <Twitter className="w-5 h-5" />
+            </a>
+          </div>
+        </div>
+        
+        <div>
+          <h4 className="text-white font-bold mb-4">Product</h4>
+          <ul className="space-y-2 text-sm text-zinc-500">
+            <li><button onClick={() => onNavigate('dashboard')} className="hover:text-orange-500 transition-colors">Dashboard</button></li>
+            <li><button onClick={() => onNavigate('recipes')} className="hover:text-orange-500 transition-colors">Recipes</button></li>
+            <li><button onClick={() => onNavigate('chat')} className="hover:text-orange-500 transition-colors">Chef Chat</button></li>
+            <li><button onClick={() => onNavigate('subscription')} className="hover:text-orange-500 transition-colors">Pricing</button></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="text-white font-bold mb-4">Company</h4>
+          <ul className="space-y-2 text-sm text-zinc-500">
+            <li><button onClick={() => onNavigate('about')} className="hover:text-orange-500 transition-colors">About Us</button></li>
+            <li><button onClick={() => onNavigate('contact')} className="hover:text-orange-500 transition-colors">Contact Us</button></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="text-white font-bold mb-4">Legal</h4>
+          <ul className="space-y-2 text-sm text-zinc-500">
+            <li><button onClick={() => onNavigate('privacy')} className="hover:text-orange-500 transition-colors">Privacy Policy</button></li>
+            <li><button onClick={() => onNavigate('terms')} className="hover:text-orange-500 transition-colors">Terms of Service</button></li>
+          </ul>
+        </div>
+      </div>
+      <div className="max-w-7xl mx-auto px-6 pt-12 mt-12 border-t border-zinc-900 text-center text-xs text-zinc-600">
+        © {new Date().getFullYear()} ChefAI. All rights reserved. Designed by Hasnain Naseer. Contact: naseerhassnain981@gmail.com
+      </div>
+    </footer>
+  );
+}
+
+function AboutUs() {
+  return (
+    <Card className="max-w-4xl mx-auto py-12 prose prose-invert prose-orange">
+      <div className="text-center mb-12">
+        <Badge className="mb-4">About Us</Badge>
+        <h2 className="text-4xl font-bold mb-4">Welcome to <span className="text-orange-600">Chef AI</span></h2>
+      </div>
+      
+      <div className="space-y-8 text-zinc-400">
+        <p className="text-lg leading-relaxed">
+          Welcome to Chef AI – your personal digital cooking assistant! 🍳
+        </p>
+        
+        <p>
+          Chef AI helps you discover recipes, plan meals, and cook smarter. Whether you type, speak, or upload images, Chef AI responds instantly with ingredients, step-by-step instructions, and helpful tips.
+        </p>
+
+        <p>
+          We support dishes from around the world – from local favorites to international cuisines – giving you unlimited cooking inspiration.
+        </p>
+
+        <p>
+          Free users can upload up to 3 images, while our Pro plan unlocks unlimited uploads and additional features for a premium cooking experience.
+        </p>
+
+        <p className="font-bold text-white italic">
+          Our mission is to make cooking easy, fun, and accessible for everyone. Start your culinary journey with Chef AI today!
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12 not-prose">
+          <div className="flex items-start gap-4">
+            <div className="p-2 bg-orange-600/20 rounded-lg"><Zap className="w-5 h-5 text-orange-600" /></div>
+            <div>
+              <h4 className="font-bold text-white">Instant Inspiration</h4>
+              <p className="text-sm text-zinc-500">Get recipes in seconds based on what's in your fridge.</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-4">
+            <div className="p-2 bg-orange-600/20 rounded-lg"><Brain className="w-5 h-5 text-orange-600" /></div>
+            <div>
+              <h4 className="font-bold text-white">Personalized</h4>
+              <p className="text-sm text-zinc-500">Your Taste DNA ensures every suggestion is tailored to you.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function TermsOfService() {
+  return (
+    <Card className="max-w-4xl mx-auto py-12 prose prose-invert prose-orange px-8">
+      <h2 className="text-3xl font-bold mb-8">Terms of Service</h2>
+      <p className="text-zinc-400 mb-6">Last updated: April 2, 2026</p>
+      
+      <div className="space-y-8 text-zinc-500">
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">1. Acceptance of Terms</h3>
+          <p>By accessing or using Chef AI, you agree to be bound by these Terms of Service and all applicable laws and regulations.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">2. Use License</h3>
+          <p>Permission is granted to temporarily use Chef AI for personal, non-commercial transitory viewing only. This is the grant of a license, not a transfer of title.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">3. Pro Subscription</h3>
+          <p>Our Pro plan offers additional features such as unlimited image uploads. Subscriptions are billed on a recurring basis and can be canceled at any time. Payments are processed securely via Stripe.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">4. Disclaimer</h3>
+          <p>The materials on Chef AI are provided on an 'as is' basis. Chef AI makes no warranties, expressed or implied, and hereby disclaims and negates all other warranties including, without limitation, implied warranties or conditions of merchantability, fitness for a particular purpose, or non-infringement of intellectual property or other violation of rights.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">5. Limitations</h3>
+          <p>In no event shall Chef AI or its suppliers be liable for any damages (including, without limitation, damages for loss of data or profit, or due to business interruption) arising out of the use or inability to use Chef AI.</p>
+        </section>
+      </div>
+    </Card>
+  );
+}
+
+function PrivacyPolicy() {
+  return (
+    <Card className="max-w-4xl mx-auto py-12 prose prose-invert prose-orange">
+      <h2 className="text-3xl font-bold mb-8">Privacy Policy</h2>
+      <p className="text-zinc-400 mb-6">Last updated: April 2, 2026</p>
+      
+      <div className="space-y-8 text-zinc-500">
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">1. Information We Collect</h3>
+          <p>We collect information you provide directly to us, such as when you create an account, update your Taste DNA, or interact with Chef Chat. This includes your email address, display name, and culinary preferences.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">2. How We Use Your Information</h3>
+          <p>We use the information we collect to provide, maintain, and improve our services, including personalizing your recipe recommendations and responding to your chat inquiries.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">3. Data Security</h3>
+          <p>We take reasonable measures to help protect information about you from loss, theft, misuse and unauthorized access, disclosure, alteration and destruction.</p>
+        </section>
+
+        <section>
+          <h3 className="text-xl font-bold text-white mb-4">4. Your Choices</h3>
+          <p>You may update your account information at any time by logging into your account settings. You can also delete your account by contacting our support team.</p>
+        </section>
+      </div>
+    </Card>
+  );
+}
+
+function ContactUs() {
+  return (
+    <Card className="max-w-2xl mx-auto py-12">
+      <div className="text-center mb-12">
+        <Badge className="mb-4">Contact Us</Badge>
+        <h2 className="text-4xl font-bold mb-4">Get in <span className="text-orange-600">Touch</span></h2>
+        <p className="text-zinc-400">Have questions or feedback? We'd love to hear from you.</p>
+      </div>
+
+      <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Name</label>
+            <input type="text" className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-orange-600 outline-none transition-all" placeholder="Your Name" />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Email</label>
+            <input type="email" className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-orange-600 outline-none transition-all" placeholder="your@email.com" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Message</label>
+          <textarea className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-orange-600 outline-none transition-all h-32 resize-none" placeholder="How can we help?"></textarea>
+        </div>
+        <Button className="w-full py-4 rounded-xl font-bold">Send Message</Button>
+      </form>
+
+      <div className="mt-12 pt-12 border-t border-zinc-800 grid grid-cols-2 gap-8 text-center">
+        <div>
+          <h4 className="font-bold text-white mb-2">Email Us</h4>
+          <p className="text-sm text-zinc-500">naseerhassnain981@gmail.com</p>
+        </div>
+        <div>
+          <h4 className="font-bold text-white mb-2">Social</h4>
+          <p className="text-sm text-zinc-500">@hasnain_naseer8</p>
+        </div>
+      </div>
+    </Card>
   );
 }
