@@ -344,7 +344,21 @@ export default function App() {
             {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} onRefresh={() => fetchUserData(user.id)} />}
             {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
             {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
-            {activeTab === 'chat' && <ChefChat user={user} messages={chatMessages} fridgeItems={fridgeItems} savedRecipes={savedRecipes} profile={userProfile} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'chat' && (
+              <ChefChat 
+                user={user} 
+                messages={chatMessages} 
+                fridgeItems={fridgeItems} 
+                savedRecipes={savedRecipes} 
+                profile={userProfile} 
+                onUpgrade={() => setActiveTab('subscription')} 
+                onRefresh={() => fetchUserData(user.id)} 
+                onError={(msg) => {
+                  setConnectionError(msg);
+                  setTimeout(() => setConnectionError(null), 5000);
+                }}
+              />
+            )}
             {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
             {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
             {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} onRefresh={() => fetchUserData(user.id)} />}
@@ -870,7 +884,7 @@ function TasteDNA({ user, profile, onRefresh }: { user: any, profile: any, onRef
   );
 }
 
-function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrade, onRefresh }: { user: any, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, onUpgrade: () => void, onRefresh: () => void }) {
+function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrade, onRefresh, onError }: { user: any, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, onUpgrade: () => void, onRefresh: () => void, onError: (msg: string) => void }) {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -886,19 +900,34 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   };
 
   const startListening = () => {
-    if (!('webkitSpeechRecognition' in window)) {
-      alert("Speech recognition not supported in this browser.");
+    if (!('webkitSpeciesRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+      onError("Speech recognition not supported in this browser.");
       return;
     }
     const recognition = new (window as any).webkitSpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
+    recognition.lang = 'en-US'; // Default, but it will pick up other languages
+    
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
+    
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      setInput(transcript);
+      if (transcript) {
+        setInput(transcript);
+        // Automatically send after a short delay to allow the state to update
+        setTimeout(() => {
+          handleSend(transcript);
+        }, 100);
+      }
     };
+    
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error', event.error);
+      setIsListening(false);
+    };
+    
     recognition.start();
   };
 
@@ -907,7 +936,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     if (!file) return;
 
     if (!isPro && uploadCount >= 3) {
-      alert("You have reached the free limit of 3 image uploads. Please upgrade to Pro to continue uploading images.");
+      onError("You have reached the free limit of 3 image uploads. Upgrade to Pro to continue.");
       onUpgrade();
       return;
     }
@@ -922,17 +951,17 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     reader.readAsDataURL(file);
   };
 
-  const handleSend = async () => {
-    if (!input && !selectedImage) return;
+  const handleSend = async (overrideInput?: string) => {
+    const currentInput = overrideInput || input;
+    if (!currentInput && !selectedImage) return;
     
-    const userMsg = { role: 'user' as const, content: input || "Sent an image" };
+    const userMsg = { role: 'user' as const, content: currentInput || "Sent an image" };
     await api.addChatMessage(user.id, userMsg);
     
     if (selectedImage) {
       await api.incrementImageCount(user.id);
     }
 
-    const currentInput = input;
     const currentImage = selectedImage;
     
     setInput('');
@@ -1023,7 +1052,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSend()}
         />
-        <Button onClick={handleSend} disabled={isSending}><Send className="w-4 h-4" /></Button>
+        <Button onClick={() => handleSend()} disabled={isSending}><Send className="w-4 h-4" /></Button>
       </div>
       {!isPro && (
         <p className="mt-2 text-[10px] text-zinc-600 text-center">
