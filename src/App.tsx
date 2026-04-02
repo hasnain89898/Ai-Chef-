@@ -128,9 +128,19 @@ export default function App() {
     // Check local storage for user
     const savedUser = localStorage.getItem('chefai_user');
     if (savedUser) {
-      const u = JSON.parse(savedUser);
-      setUser(u);
-      fetchUserData(u.id);
+      try {
+        const u = JSON.parse(savedUser);
+        if (u && typeof u === 'object' && u.id) {
+          setUser(u);
+          fetchUserData(u);
+        } else {
+          localStorage.removeItem('chefai_user');
+          setLoading(false);
+        }
+      } catch (e) {
+        localStorage.removeItem('chefai_user');
+        setLoading(false);
+      }
     } else {
       setLoading(false);
     }
@@ -139,8 +149,16 @@ export default function App() {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [pendingTargetTab, setPendingTargetTab] = useState<string | null>(null);
 
-  const fetchUserData = async (userId: string) => {
+  const fetchUserData = async (userObj: any) => {
+    if (!userObj || typeof userObj !== 'object' || !userObj.id) {
+      setLoading(false);
+      return;
+    }
+    const userId = userObj.id;
     try {
+      // Ensure user exists in DB (idempotent)
+      await api.createUser(userObj);
+
       const [profile, fridge, recipes, cravingsData, chat, sub, meal, grocery] = await Promise.all([
         api.getUser(userId),
         api.getFridge(userId),
@@ -176,8 +194,12 @@ export default function App() {
     }
     
     try {
+      // Deterministic ID based on email
+      const simpleHash = email.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0).toString(16);
+      const userId = `user_${email.split('@')[0].replace(/[^a-z0-9]/gi, '')}_${simpleHash}`;
+      
       const userData = {
-        id: 'user_' + Math.random().toString(36).substr(2, 9),
+        id: userId,
         email: email,
         display_name: email.split('@')[0],
         photo_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
@@ -193,7 +215,7 @@ export default function App() {
       }
       
       setIsLoginModalOpen(false);
-      await fetchUserData(u.id);
+      await fetchUserData(u);
     } catch (e) {
       console.error('Login/Navigation failed', e);
       if (retryCount < 1) {
@@ -890,9 +912,18 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   const [isListening, setIsListening] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   const isPro = profile?.status === 'pro';
   const uploadCount = profile?.image_upload_count || 0;
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isSending]);
 
   const speak = (text: string) => {
     const utterance = new SpeechSynthesisUtterance(text);
@@ -944,9 +975,17 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
     const reader = new FileReader();
     reader.onload = async (event) => {
       const base64 = event.target?.result as string;
-      const data = base64.split(',')[1];
-      const mimeType = file.type;
-      setSelectedImage({ data, mimeType });
+      try {
+        const resizedBase64 = await resizeImage(base64, 1024, 1024, 0.8);
+        const data = resizedBase64.split(',')[1];
+        const mimeType = 'image/jpeg';
+        setSelectedImage({ data, mimeType });
+      } catch (err) {
+        console.error("Image resize failed", err);
+        const data = base64.split(',')[1];
+        const mimeType = file.type;
+        setSelectedImage({ data, mimeType });
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -987,72 +1026,139 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrad
   };
 
   return (
-    <Card className="h-[600px] flex flex-col">
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+    <Card className="h-[650px] flex flex-col overflow-hidden border-zinc-800/50 bg-zinc-950/40">
+      <div className="flex-1 overflow-y-auto space-y-6 mb-4 pr-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+        {messages.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-50">
+            <ChefHat className="w-12 h-12 mb-4 text-orange-600" />
+            <h3 className="text-xl font-bold mb-2">Welcome to Chef AI</h3>
+            <p className="text-sm max-w-xs">Ask me about any dish, upload an image of your fridge, or get a recipe for what you're craving!</p>
+          </div>
+        )}
         {messages.map((m, i) => (
-          <div key={i} className={cn("flex flex-col", m.role === 'user' ? "items-end" : "items-start")}>
+          <motion.div 
+            key={i} 
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className={cn("flex flex-col", m.role === 'user' ? "items-end" : "items-start")}
+          >
             <div className={cn(
-              "max-w-[80%] p-3 rounded-2xl text-sm",
-              m.role === 'user' ? "bg-orange-600 text-white" : "bg-zinc-800 text-zinc-100"
+              "max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed shadow-lg",
+              m.role === 'user' 
+                ? "bg-gradient-to-br from-orange-600 to-orange-700 text-white rounded-tr-none" 
+                : "bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-tl-none"
             )}>
               {m.content}
             </div>
-            {m.role === 'model' && (
-              <button 
-                onClick={() => speak(m.content)}
-                className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500 hover:text-orange-500 transition-colors"
-              >
-                <Volume2 className="w-3 h-3" />
-                Speak
-              </button>
-            )}
-          </div>
+            <div className="flex items-center gap-3 mt-1.5 px-1">
+              <span className="text-[9px] text-zinc-600 font-medium">
+                {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              {m.role === 'model' && (
+                <button 
+                  onClick={() => speak(m.content)}
+                  className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-orange-500 transition-colors font-medium"
+                >
+                  <Volume2 className="w-3 h-3" />
+                  Listen
+                </button>
+              )}
+            </div>
+          </motion.div>
         ))}
         {isSending && (
-          <div className="flex justify-start">
-            <div className="bg-zinc-800 p-3 rounded-2xl">
-              <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" />
-                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+          <motion.div 
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex justify-start"
+          >
+            <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl rounded-tl-none shadow-lg">
+              <div className="flex gap-1.5">
+                <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" />
+                <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce [animation-delay:0.2s]" />
+                <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce [animation-delay:0.4s]" />
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
-      {selectedImage && (
-        <div className="mb-4 relative w-20 h-20">
-          <img src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} className="w-full h-full object-cover rounded-lg" />
-          <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1">
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
+      <AnimatePresence>
+        {selectedImage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.8 }}
+            className="mb-4 relative w-24 h-24 group"
+          >
+            <img src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} className="w-full h-full object-cover rounded-xl border-2 border-orange-600 shadow-xl" />
+            <button 
+              onClick={() => setSelectedImage(null)} 
+              className="absolute -top-2 -right-2 bg-zinc-900 text-white rounded-full p-1.5 border border-zinc-800 shadow-lg hover:bg-red-600 transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center">
+              <span className="text-[10px] font-bold text-white">Ready</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="flex gap-2">
-        <input 
-          type="file" 
-          accept="image/*" 
-          className="hidden" 
-          ref={fileInputRef} 
-          onChange={handleImageUpload}
-        />
-        <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
-          <ImageIcon className="w-4 h-4" />
-        </Button>
-        <Button variant="ghost" size="sm" onClick={startListening} className={cn(isListening && "text-orange-500 animate-pulse")}>
-          {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-        </Button>
-        <input 
-          type="text" 
-          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 outline-none focus:border-orange-600"
+      <div className="relative flex items-end gap-2 bg-zinc-900/50 p-2 rounded-2xl border border-zinc-800/50 focus-within:border-orange-600/50 transition-colors">
+        <div className="flex items-center">
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleImageUpload}
+          />
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => fileInputRef.current?.click()}
+            className="h-10 w-10 p-0 rounded-xl hover:bg-zinc-800"
+          >
+            <ImageIcon className="w-5 h-5" />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={startListening} 
+            className={cn(
+              "h-10 w-10 p-0 rounded-xl transition-all duration-300",
+              isListening ? "bg-orange-600 text-white animate-pulse" : "hover:bg-zinc-800"
+            )}
+          >
+            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+          </Button>
+        </div>
+        <textarea 
+          className="flex-1 bg-transparent border-none rounded-xl px-2 py-2.5 outline-none text-sm resize-none max-h-32 min-h-[40px] scrollbar-none"
           placeholder="Ask Chef AI..."
+          rows={1}
           value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSend()}
+          onChange={e => {
+            setInput(e.target.value);
+            e.target.style.height = 'auto';
+            e.target.style.height = e.target.scrollHeight + 'px';
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
         />
-        <Button onClick={() => handleSend()} disabled={isSending}><Send className="w-4 h-4" /></Button>
+        <Button 
+          onClick={() => handleSend()} 
+          disabled={isSending || (!input && !selectedImage)}
+          className="h-10 w-10 p-0 rounded-xl bg-orange-600 hover:bg-orange-700"
+        >
+          <Send className="w-5 h-5" />
+        </Button>
       </div>
       {!isPro && (
         <p className="mt-2 text-[10px] text-zinc-600 text-center">
