@@ -1,9 +1,4 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   ChefHat, 
   Refrigerator, 
@@ -52,35 +47,11 @@ import {
   PolarRadiusAxis, 
   ResponsiveContainer 
 } from 'recharts';
-import { 
-  auth, 
-  db, 
-  googleProvider, 
-  signInWithPopup, 
-  onAuthStateChanged, 
-  FirebaseUser, 
-  handleFirestoreError, 
-  OperationType,
-  testConnection
-} from './lib/firebase';
-import { 
-  doc, 
-  setDoc, 
-  getDoc, 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc,
-  deleteDoc, 
-  serverTimestamp, 
-  query, 
-  orderBy, 
-  limit 
-} from 'firebase/firestore';
 import { generateRecipe, predictCraving, analyzeTasteDNA, chatWithChef, searchRecipeByName, Recipe } from './services/geminiService';
 import { resizeImage } from './lib/imageUtils';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { api } from './lib/api';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -138,7 +109,7 @@ const Badge = ({ children, className }: { children: React.ReactNode, className?:
 // --- Main App ---
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'fridge' | 'recipes' | 'dna' | 'chat' | 'meal-plan' | 'grocery' | 'subscription'>('dashboard');
   const [fridgeItems, setFridgeItems] = useState<any[]>([]);
@@ -146,114 +117,98 @@ export default function App() {
   const [cravings, setCravings] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  // New State
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [mealPlans, setMealPlans] = useState<any[]>([]);
   const [groceryList, setGroceryList] = useState<any[]>([]);
   const [subscription, setSubscription] = useState<{ status: 'free' | 'pro'; plan: string } | null>(null);
 
   useEffect(() => {
-    testConnection();
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    // Check local storage for user
+    const savedUser = localStorage.getItem('chefai_user');
+    if (savedUser) {
+      const u = JSON.parse(savedUser);
+      setUser(u);
+      fetchUserData(u.id);
+    } else {
       setLoading(false);
-    });
-    return () => unsubscribe();
+    }
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [pendingTargetTab, setPendingTargetTab] = useState<string | null>(null);
 
-    // Listen to user profile
-    const userDoc = doc(db, 'users', user.uid);
-    const unsubProfile = onSnapshot(userDoc, (doc) => {
-      if (doc.exists()) {
-        setUserProfile(doc.data());
-      } else {
-        // Initialize profile
-        const initialProfile = {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-          preferredCuisine: 'Mediterranean',
-          tasteDNA: { sweetness: 50, saltiness: 50, spiciness: 50, umami: 50, acidity: 50 },
-          imageUploadCount: 0,
-          lastImageUploadAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        };
-        setDoc(userDoc, initialProfile).catch(e => handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`));
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}`));
-
-    // Listen to fridge items
-    const fridgeRef = collection(db, 'users', user.uid, 'fridge');
-    const unsubFridge = onSnapshot(query(fridgeRef, orderBy('addedAt', 'desc')), (snap) => {
-      setFridgeItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/fridge`));
-
-    // Listen to recipes
-    const recipesRef = collection(db, 'users', user.uid, 'recipes');
-    const unsubRecipes = onSnapshot(query(recipesRef, orderBy('generatedAt', 'desc')), (snap) => {
-      setSavedRecipes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/recipes`));
-
-    // Listen to cravings
-    const cravingsRef = collection(db, 'users', user.uid, 'cravings');
-    const unsubCravings = onSnapshot(query(cravingsRef, orderBy('timestamp', 'desc'), limit(5)), (snap) => {
-      setCravings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/cravings`));
-
-    // Listen to chat
-    const chatRef = collection(db, 'users', user.uid, 'chat');
-    const unsubChat = onSnapshot(query(chatRef, orderBy('timestamp', 'asc'), limit(50)), (snap) => {
-      setChatMessages(snap.docs.map(d => d.data() as any));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/chat`));
-
-    // Listen to subscription
-    const subRef = doc(db, 'users', user.uid, 'subscription', 'status');
-    const unsubSub = onSnapshot(subRef, (snap) => {
-      if (snap.exists()) {
-        setSubscription(snap.data() as any);
-      } else {
-        setSubscription({ status: 'free', plan: 'none' });
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/subscription`));
-
-    // Listen to meal plan
-    const mealRef = collection(db, 'users', user.uid, 'mealPlan');
-    const unsubMeal = onSnapshot(query(mealRef, orderBy('date', 'asc')), (snap) => {
-      setMealPlans(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/mealPlan`));
-
-    // Listen to grocery list
-    const groceryRef = collection(db, 'users', user.uid, 'groceryList');
-    const unsubGrocery = onSnapshot(query(groceryRef, orderBy('addedAt', 'desc')), (snap) => {
-      setGroceryList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (e) => handleFirestoreError(e, OperationType.GET, `users/${user.uid}/groceryList`));
-
-    return () => {
-      unsubProfile();
-      unsubFridge();
-      unsubRecipes();
-      unsubCravings();
-      unsubChat();
-      unsubSub();
-      unsubMeal();
-      unsubGrocery();
-    };
-  }, [user]);
-
-  const handleLogin = async () => {
+  const fetchUserData = async (userId: string) => {
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Login failed', error);
+      const [profile, fridge, recipes, cravingsData, chat, sub, meal, grocery] = await Promise.all([
+        api.getUser(userId),
+        api.getFridge(userId),
+        api.getRecipes(userId),
+        api.getCravings(userId),
+        api.getChat(userId),
+        api.getSubscription(userId),
+        api.getMealPlan(userId),
+        api.getGrocery(userId)
+      ]);
+
+      setUserProfile(profile);
+      setFridgeItems(fridge);
+      setSavedRecipes(recipes);
+      setCravings(cravingsData);
+      setChatMessages(chat);
+      setSubscription(sub);
+      setMealPlans(meal);
+      setGroceryList(grocery);
+      setLoading(false);
+    } catch (e) {
+      console.error('Failed to fetch user data', e);
+      setConnectionError("Unable to load your kitchen data. Please try again later.");
+      setLoading(false);
     }
   };
 
-  const handleLogout = () => auth.signOut();
+  const handleLogin = useCallback(async (email: string, retryCount = 0): Promise<void> => {
+    if (!email.includes('@gmail.com')) {
+      setConnectionError("Please use a valid Gmail address.");
+      setTimeout(() => setConnectionError(null), 3000);
+      return;
+    }
+    
+    try {
+      const userData = {
+        id: 'user_' + Math.random().toString(36).substr(2, 9),
+        email: email,
+        display_name: email.split('@')[0],
+        photo_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
+      };
+      
+      const u = await api.createUser(userData);
+      localStorage.setItem('chefai_user', JSON.stringify(u));
+      setUser(u);
+      
+      if (pendingTargetTab) {
+        setActiveTab(pendingTargetTab as any);
+        setPendingTargetTab(null);
+      }
+      
+      setIsLoginModalOpen(false);
+      await fetchUserData(u.id);
+    } catch (e) {
+      console.error('Login/Navigation failed', e);
+      if (retryCount < 1) {
+        return handleLogin(email, retryCount + 1);
+      }
+      setConnectionError("Navigation error. Please refresh or try again.");
+      setTimeout(() => setConnectionError(null), 5000);
+    }
+  }, [fetchUserData, pendingTargetTab]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('chefai_user');
+    setUser(null);
+    setUserProfile(null);
+  };
 
   if (loading) {
     return (
@@ -269,11 +224,32 @@ export default function App() {
   }
 
   if (!user) {
-    return <LandingPage onLogin={handleLogin} />;
+    return (
+      <>
+        <LandingPage onLogin={(tab) => {
+          setPendingTargetTab(tab || 'dashboard');
+          setIsLoginModalOpen(true);
+        }} />
+        <AnimatePresence>
+          {isLoginModalOpen && (
+            <LoginModal 
+              onClose={() => setIsLoginModalOpen(false)} 
+              onLogin={handleLogin} 
+            />
+          )}
+        </AnimatePresence>
+      </>
+    );
   }
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-orange-600/30">
+      {connectionError && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-red-600 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+          <AlertCircle className="w-4 h-4" />
+          {connectionError}
+        </div>
+      )}
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-zinc-800">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -302,8 +278,8 @@ export default function App() {
               </div>
             )}
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-900 rounded-full border border-zinc-800">
-              <img src={user.photoURL || ''} alt="" className="w-6 h-6 rounded-full" />
-              <span className="text-xs font-medium">{user.displayName}</span>
+              <img src={user.photo_url || ''} alt="" className="w-6 h-6 rounded-full" />
+              <span className="text-xs font-medium">{user.display_name}</span>
             </div>
             <Button variant="ghost" size="sm" onClick={handleLogout} className="hidden sm:inline-flex">
               <LogOut className="w-4 h-4 mr-2" />
@@ -362,15 +338,16 @@ export default function App() {
                 userProfile={userProfile} 
                 onNavigate={(tab) => setActiveTab(tab)}
                 subscription={subscription}
+                onRefresh={() => fetchUserData(user.id)}
               />
             )}
-            {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} />}
-            {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} />}
-            {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} />}
-            {activeTab === 'chat' && <ChefChat user={user} messages={chatMessages} fridgeItems={fridgeItems} savedRecipes={savedRecipes} profile={userProfile} onUpgrade={() => setActiveTab('subscription')} />}
-            {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
-            {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} />}
-            {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} />}
+            {activeTab === 'fridge' && <FridgeManager user={user} items={fridgeItems} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'recipes' && <RecipeExplorer user={user} fridgeItems={fridgeItems} savedRecipes={savedRecipes} userProfile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'dna' && <TasteDNA user={user} profile={userProfile} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'chat' && <ChefChat user={user} messages={chatMessages} fridgeItems={fridgeItems} savedRecipes={savedRecipes} profile={userProfile} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'meal-plan' && <MealPlanner user={user} plans={mealPlans} savedRecipes={savedRecipes} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'grocery' && <GroceryList user={user} items={groceryList} isPro={subscription?.status === 'pro'} onUpgrade={() => setActiveTab('subscription')} onRefresh={() => fetchUserData(user.id)} />}
+            {activeTab === 'subscription' && <SubscriptionPlans user={user} currentSub={subscription} onRefresh={() => fetchUserData(user.id)} />}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -380,162 +357,113 @@ export default function App() {
 
 // --- Sub-components ---
 
-function LandingPage({ onLogin }: { onLogin: () => void }) {
+function LoginModal({ onClose, onLogin }: { onClose: () => void, onLogin: (email: string) => void }) {
+  const [email, setEmail] = useState('');
+
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-orange-600/30 overflow-hidden">
-      {/* Hero Background */}
-      <div className="absolute inset-0 z-0">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl"
+      >
+        <button onClick={onClose} className="absolute top-4 right-4 p-2 text-zinc-500 hover:text-white transition-colors">
+          <X className="w-5 h-5" />
+        </button>
+        
+        <div className="flex flex-col items-center text-center mb-8">
+          <div className="w-16 h-16 bg-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
+            <ChefHat className="w-8 h-8 text-orange-600" />
+          </div>
+          <h3 className="text-2xl font-bold text-white mb-2">Welcome to ChefAI</h3>
+          <p className="text-zinc-400">Please sign in with your Gmail to continue your culinary journey.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-widest text-zinc-500 ml-1">Gmail Address</label>
+            <input 
+              type="email" 
+              placeholder="chef@gmail.com"
+              className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 text-white placeholder:text-zinc-700 focus:border-orange-600 outline-none transition-all"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onLogin(email)}
+              autoFocus
+            />
+          </div>
+          <Button 
+            className="w-full py-4 rounded-2xl text-lg font-bold"
+            onClick={() => onLogin(email)}
+          >
+            Sign In
+          </Button>
+          <p className="text-[10px] text-zinc-600 text-center px-4">
+            By signing in, you agree to our Terms of Service and Privacy Policy.
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function LandingPage({ onLogin }: { onLogin: (targetTab?: string) => void }) {
+  return (
+    <div className="min-h-screen bg-black text-white selection:bg-orange-600/30 overflow-hidden flex flex-col">
+      <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-b from-orange-600/10 via-transparent to-black" />
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-600/20 rounded-full blur-[120px] animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-zinc-600/10 rounded-full blur-[120px]" />
       </div>
 
-      <nav className="relative z-10 max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+      <nav className="relative z-20 max-w-7xl mx-auto px-6 w-full h-20 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ChefHat className="w-8 h-8 text-orange-600" />
           <span className="text-2xl font-bold tracking-tighter">CHEF<span className="text-orange-600">AI</span></span>
         </div>
-        <div className="hidden md:flex items-center gap-8 text-sm font-medium text-zinc-400">
-          <a href="#" className="hover:text-white transition-colors">Features</a>
-          <a href="#" className="hover:text-white transition-colors">How it works</a>
-          <a href="#" className="hover:text-white transition-colors">Community</a>
-        </div>
-        <Button onClick={onLogin} className="rounded-full px-8">
+        <Button onClick={() => onLogin('dashboard')} className="rounded-full px-8 relative z-30">
           Get Started
         </Button>
       </nav>
 
-      <main className="relative z-10 max-w-7xl mx-auto px-6 pt-20 pb-32">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
+      <main className="relative z-20 max-w-7xl mx-auto px-6 flex-1 flex items-center py-20">
+        <div className="grid lg:grid-cols-2 gap-16 items-center w-full">
           <motion.div
             initial={{ opacity: 0, x: -50 }}
             whileInView={{ opacity: 1, x: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
+            className="relative z-30"
           >
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.2 }}
-            >
-              <Badge className="mb-6">AI-Powered Culinary Intelligence</Badge>
-            </motion.div>
-            <motion.h1 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.3 }}
-              className="text-6xl md:text-8xl font-bold tracking-tight leading-[0.9] mb-8"
-            >
-              Your Personal <br />
-              <span className="text-orange-600">Digital Chef.</span>
-            </motion.h1>
-            <motion.p 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.4 }}
-              className="text-xl text-zinc-400 max-w-lg mb-10 leading-relaxed"
-            >
-              ChefAI manages your kitchen, predicts your cravings, and crafts professional recipes tailored to your unique Taste DNA.
-            </motion.p>
-            <div className="flex flex-wrap gap-4">
-              <Button size="lg" onClick={onLogin} className="rounded-full px-10">
-                Start Cooking <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-              <Button size="lg" variant="secondary" className="rounded-full px-10">
-                View Demo
-              </Button>
-            </div>
-
-            <motion.div 
-              initial={{ opacity: 0 }}
-              whileInView={{ opacity: 1 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.6 }}
-              className="mt-16 flex items-center gap-8"
-            >
-              <div className="flex -space-x-3">
-                {[1, 2, 3, 4].map(i => (
-                  <motion.img 
-                    key={i} 
-                    initial={{ scale: 0 }}
-                    whileInView={{ scale: 1 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: 0.6 + (i * 0.1) }}
-                    src={`https://picsum.photos/seed/user${i}/100/100`} 
-                    className="w-10 h-10 rounded-full border-2 border-black" 
-                    alt="" 
-                  />
-                ))}
-              </div>
-              <p className="text-sm text-zinc-500">
-                <span className="text-white font-bold">10k+</span> chefs already using ChefAI
-              </p>
-            </motion.div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 1 }}
-            className="relative"
-          >
-            <div className="relative z-10 rounded-3xl border border-zinc-800 bg-zinc-900/50 p-4 backdrop-blur-xl shadow-2xl">
-              <img 
-                src="https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&q=80&w=1000" 
-                className="rounded-2xl w-full aspect-[4/5] object-cover" 
-                alt="Chef cooking" 
-              />
-              <motion.div 
-                initial={{ x: -20, opacity: 0 }}
-                whileInView={{ x: 0, opacity: 1 }}
-                viewport={{ once: true }}
-                transition={{ delay: 0.8 }}
-                className="absolute -bottom-6 -left-6 bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl max-w-[240px]"
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2 bg-orange-600/20 rounded-lg">
-                    <Brain className="w-5 h-5 text-orange-500" />
-                  </div>
-                  <span className="text-sm font-bold">AI Prediction</span>
-                </div>
-                <p className="text-xs text-zinc-400 mb-2">Based on your mood and the rainy weather, you might be craving:</p>
-                <p className="text-lg font-bold text-orange-500">Creamy Mushroom Risotto</p>
-              </motion.div>
-            </div>
-            {/* Decorative elements */}
-            <div className="absolute -top-10 -right-10 w-40 h-40 bg-orange-600/30 rounded-full blur-3xl" />
+            <Badge className="mb-6">Your Personal Culinary Assistant</Badge>
+            <h1 className="text-6xl md:text-8xl font-bold tracking-tight leading-[0.9] mb-8">
+              Master Your <br />
+              <span className="text-orange-600">Kitchen.</span>
+            </h1>
+            <p className="text-xl text-zinc-400 max-w-lg mb-10 leading-relaxed">
+              ChefAI helps you manage your ingredients, discovers recipes you'll love, and provides expert cooking advice tailored to your unique tastes.
+            </p>
+            <Button size="lg" onClick={() => onLogin('chat')} className="rounded-full px-10 relative z-30">
+              Start Cooking <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
           </motion.div>
         </div>
       </main>
-
-      <footer className="relative z-10 border-t border-zinc-900 py-12">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-8">
-          <div className="flex items-center gap-2">
-            <ChefHat className="w-6 h-6 text-orange-600" />
-            <span className="text-xl font-bold tracking-tighter">CHEF<span className="text-orange-600">AI</span></span>
-          </div>
-          <div className="flex gap-6 text-zinc-500">
-            <a href="#" className="hover:text-white"><Twitter className="w-5 h-5" /></a>
-            <a href="#" className="hover:text-white"><Instagram className="w-5 h-5" /></a>
-            <a href="#" className="hover:text-white"><Github className="w-5 h-5" /></a>
-          </div>
-          <p className="text-sm text-zinc-600">© 2026 ChefAI. All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 }
 
 function NavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
-      whileHover={{ y: -2 }}
-      whileTap={{ y: 0 }}
       className={cn(
         'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 relative',
         active ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
@@ -543,29 +471,14 @@ function NavButton({ active, onClick, icon, label }: { active: boolean, onClick:
     >
       {icon}
       {label}
-      {active && (
-        <motion.div
-          layoutId="activeNavGlow"
-          className="absolute inset-0 bg-orange-600/20 blur-xl rounded-xl -z-20"
-          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-        />
-      )}
-      {active && (
-        <motion.div
-          layoutId="activeNav"
-          className="absolute inset-0 bg-orange-600 rounded-xl -z-10"
-          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-        />
-      )}
-    </motion.button>
+    </button>
   );
 }
 
 function MobileNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
-      whileTap={{ scale: 0.95 }}
       className={cn(
         'flex items-center gap-4 px-4 py-4 rounded-2xl text-lg font-medium transition-all duration-200',
         active ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:bg-zinc-900'
@@ -573,11 +486,11 @@ function MobileNavButton({ active, onClick, icon, label }: { active: boolean, on
     >
       {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-6 h-6' })}
       {label}
-    </motion.button>
+    </button>
   );
 }
 
-function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subscription }: { user: FirebaseUser, fridgeItems: any[], cravings: any[], userProfile: any, onNavigate: (tab: any) => void, subscription: any }) {
+function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subscription, onRefresh }: { user: any, fridgeItems: any[], cravings: any[], userProfile: any, onNavigate: (tab: any) => void, subscription: any, onRefresh: () => void }) {
   const [prediction, setPrediction] = useState<any>(null);
   const [isPredicting, setIsPredicting] = useState(false);
 
@@ -591,15 +504,15 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
       const cravingData = {
         mood,
         weather,
-        predictedDish: dish,
+        predicted_dish: dish,
         confidence: Math.floor(Math.random() * 20) + 75,
-        timestamp: serverTimestamp(),
       };
 
-      await addDoc(collection(db, 'users', user.uid, 'cravings'), cravingData);
+      await api.addCraving(user.id, cravingData);
       setPrediction(cravingData);
+      onRefresh();
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}/cravings`);
+      console.error(e);
     } finally {
       setIsPredicting(false);
     }
@@ -609,8 +522,8 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
     <div className="space-y-8">
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h2 className="text-4xl font-bold tracking-tight">Welcome back, {user.displayName?.split(' ')[0]}</h2>
-          <p className="text-zinc-500">Your personal culinary dashboard is ready.</p>
+          <h2 className="text-4xl font-bold tracking-tight">Welcome back, {user.display_name?.split(' ')[0]}</h2>
+          <p className="text-zinc-500">Ready to cook something amazing today?</p>
         </div>
         <div className="flex items-center gap-4 text-sm text-zinc-400">
           <div className="flex items-center gap-2">
@@ -623,45 +536,46 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-6">
-        {/* AI Prediction - Large Bento Item */}
         <Card delay={0.1} className="md:col-span-4 lg:col-span-4 relative overflow-hidden group min-h-[320px] flex flex-col justify-center">
           <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-            <Brain className="w-48 h-48 text-orange-600" />
+            <ChefHat className="w-48 h-48 text-orange-600" />
           </div>
           <div className="relative z-10">
-            <Badge className="mb-4">AI Prediction Engine</Badge>
-            <h3 className="text-3xl font-bold mb-4">What's on the menu?</h3>
-            <p className="text-zinc-400 mb-8 max-w-md text-lg">Our neural network crafts suggestions based on your mood, local weather, and Taste DNA.</p>
+            <Badge className="mb-4">Chef's Inspiration</Badge>
+            <h3 className="text-3xl font-bold mb-4">What are you craving?</h3>
+            <p className="text-zinc-400 mb-8 max-w-md text-lg">Let ChefAI suggest the perfect dish based on your mood and the local weather.</p>
             
-            {prediction ? (
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-orange-600/10 border border-orange-600/20 rounded-2xl p-6 mb-2 max-w-md"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">Chef's Recommendation</span>
-                  <span className="text-[10px] font-medium text-zinc-500">{prediction.confidence}% Match</span>
-                </div>
-                <p className="text-3xl font-bold text-white mb-4">{prediction.predictedDish}</p>
-                <Button size="sm" onClick={() => onNavigate('recipes')} className="rounded-full">
-                  Get Recipe <ChevronRight className="ml-1 w-4 h-4" />
+            <div className="flex flex-wrap gap-4">
+              {prediction ? (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-orange-600/10 border border-orange-600/20 rounded-2xl p-6 mb-2 max-w-md w-full"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">Chef's Recommendation</span>
+                    <span className="text-[10px] font-medium text-zinc-500">{prediction.confidence}% Match</span>
+                  </div>
+                  <p className="text-3xl font-bold text-white mb-4">{prediction.predicted_dish}</p>
+                  <Button size="sm" onClick={() => onNavigate('recipes')} className="rounded-full">
+                    Get Recipe <ChevronRight className="ml-1 w-4 h-4" />
+                  </Button>
+                </motion.div>
+              ) : (
+                <Button onClick={handlePredict} disabled={isPredicting} size="lg" className="rounded-full px-8">
+                  {isPredicting ? 'Analyzing...' : 'Predict My Craving'}
+                  <Sparkles className="ml-2 w-5 h-5" />
                 </Button>
-              </motion.div>
-            ) : (
-              <Button onClick={handlePredict} disabled={isPredicting} size="lg" className="rounded-full px-8">
-                {isPredicting ? 'Analyzing...' : 'Predict My Craving'}
-                <Sparkles className="ml-2 w-5 h-5" />
+              )}
+              
+              <Button variant="secondary" size="lg" onClick={() => onNavigate('chat')} className="rounded-full px-8">
+                Start Cooking <ChefHat className="ml-2 w-5 h-5" />
               </Button>
-            )}
+            </div>
           </div>
         </Card>
 
-        {/* Fridge Status - Medium Bento Item */}
         <Card delay={0.2} className="md:col-span-2 lg:col-span-2 flex flex-col justify-between overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-5">
-            <Refrigerator className="w-24 h-24" />
-          </div>
           <div>
             <div className="flex items-center justify-between mb-6">
               <div className="p-3 bg-zinc-800 rounded-xl">
@@ -685,7 +599,6 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           </div>
         </Card>
 
-        {/* Taste DNA - Medium Bento Item */}
         <Card delay={0.3} className="md:col-span-3 lg:col-span-3">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
@@ -697,11 +610,11 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart cx="50%" cy="50%" outerRadius="80%" data={[
-                { subject: 'Sweet', A: userProfile?.tasteDNA?.sweetness || 50 },
-                { subject: 'Salt', A: userProfile?.tasteDNA?.saltiness || 50 },
-                { subject: 'Spice', A: userProfile?.tasteDNA?.spiciness || 50 },
-                { subject: 'Umami', A: userProfile?.tasteDNA?.umami || 50 },
-                { subject: 'Acid', A: userProfile?.tasteDNA?.acidity || 50 },
+                { subject: 'Sweet', A: userProfile?.taste_dna?.sweetness || 50 },
+                { subject: 'Salt', A: userProfile?.taste_dna?.saltiness || 50 },
+                { subject: 'Spice', A: userProfile?.taste_dna?.spiciness || 50 },
+                { subject: 'Umami', A: userProfile?.taste_dna?.umami || 50 },
+                { subject: 'Acid', A: userProfile?.taste_dna?.acidity || 50 },
               ]}>
                 <PolarGrid stroke="#27272a" />
                 <PolarAngleAxis dataKey="subject" tick={{ fill: '#71717a', fontSize: 10, fontWeight: 600 }} />
@@ -711,7 +624,6 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           </div>
         </Card>
 
-        {/* Recent History - Medium Bento Item */}
         <Card delay={0.4} className="md:col-span-3 lg:col-span-3">
           <div className="flex items-center gap-2 mb-6">
             <History className="w-5 h-5 text-orange-500" />
@@ -724,8 +636,8 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
                   {craving.weather === 'Sunny' ? <Sun className="w-4 h-4 text-yellow-500" /> : <CloudRain className="w-4 h-4 text-blue-500" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold truncate">{craving.predictedDish}</p>
-                  <p className="text-[9px] text-zinc-600 uppercase tracking-wider">{new Date(craving.timestamp?.toDate()).toLocaleDateString()}</p>
+                  <p className="text-xs font-bold truncate">{craving.predicted_dish}</p>
+                  <p className="text-[9px] text-zinc-600 uppercase tracking-wider">{new Date(craving.timestamp).toLocaleDateString()}</p>
                 </div>
               </div>
             )) : (
@@ -735,1218 +647,582 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
             )}
           </div>
         </Card>
-
-        {/* Subscription Status - Small Bento Item */}
-        <Card delay={0.5} className={cn(
-          "md:col-span-2 lg:col-span-2 flex flex-col justify-between border-2",
-          subscription?.status === 'pro' ? "border-orange-600/20 bg-orange-600/5" : "border-zinc-800"
-        )}>
-          <div>
-            <h3 className="text-lg font-bold mb-1">Account Tier</h3>
-            <p className="text-zinc-500 text-xs mb-4">Current plan status</p>
-            <div className="flex items-center gap-2 mb-4">
-              <div className={cn(
-                "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest",
-                subscription?.status === 'pro' ? "bg-orange-600 text-white" : "bg-zinc-800 text-zinc-400"
-              )}>
-                {subscription?.status === 'pro' ? 'Pro Member' : 'Free Tier'}
-              </div>
-            </div>
-          </div>
-          <Button 
-            variant={subscription?.status === 'pro' ? 'ghost' : 'primary'} 
-            size="sm" 
-            className="w-full"
-            onClick={() => onNavigate('subscription')}
-          >
-            {subscription?.status === 'pro' ? 'Manage Subscription' : 'Upgrade to Pro'}
-          </Button>
-        </Card>
-
-        {/* Quick Actions - Small Bento Item */}
-        <Card delay={0.6} className="md:col-span-2 lg:col-span-2 flex flex-col justify-between">
-          <h3 className="text-lg font-bold mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => onNavigate('chat')} className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-orange-600/50 transition-colors flex flex-col items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-orange-500" />
-              <span className="text-[10px] font-bold uppercase">Chat</span>
-            </button>
-            <button onClick={() => onNavigate('recipes')} className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-orange-600/50 transition-colors flex flex-col items-center gap-2">
-              <Search className="w-4 h-4 text-orange-500" />
-              <span className="text-[10px] font-bold uppercase">Search</span>
-            </button>
-            <a 
-              href="/ProjectDetails.docx" 
-              download 
-              className="col-span-2 p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-orange-600/50 transition-colors flex items-center justify-center gap-2"
-            >
-              <CreditCard className="w-4 h-4 text-orange-500" />
-              <span className="text-[10px] font-bold uppercase">Download Project Details (Word)</span>
-            </a>
-          </div>
-        </Card>
-
-        {/* Stats - Small Bento Item */}
-        <Card delay={0.7} className="md:col-span-2 lg:col-span-2 flex flex-col justify-center items-center text-center">
-          <div className="p-4 bg-orange-600/10 rounded-full mb-4">
-            <Utensils className="w-8 h-8 text-orange-500" />
-          </div>
-          <p className="text-3xl font-bold">12</p>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Recipes Crafted</p>
-        </Card>
       </div>
     </div>
   );
 }
 
-function FridgeManager({ user, items }: { user: FirebaseUser, items: any[] }) {
-  const [newItem, setNewItem] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [unit, setUnit] = useState('pcs');
+function FridgeManager({ user, items, onRefresh }: { user: any, items: any[], onRefresh: () => void }) {
+  const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'pcs' });
 
-  const handleAddItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItem.trim()) return;
-
-    try {
-      await addDoc(collection(db, 'users', user.uid, 'fridge'), {
-        name: newItem,
-        quantity: parseFloat(quantity),
-        unit,
-        addedAt: serverTimestamp(),
-      });
-      setNewItem('');
-      setQuantity('1');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}/fridge`);
-    }
+  const handleAdd = async () => {
+    if (!newItem.name) return;
+    await api.addFridgeItem(user.id, newItem);
+    setNewItem({ name: '', quantity: '', unit: 'pcs' });
+    onRefresh();
   };
 
-  const handleDeleteItem = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'fridge', id));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `users/${user.uid}/fridge/${id}`);
-    }
+  const handleDelete = async (id: number) => {
+    await api.deleteFridgeItem(id);
+    onRefresh();
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
-      <header>
-        <h2 className="text-4xl font-bold tracking-tight">Fridge Manager</h2>
-        <p className="text-zinc-500">Keep track of your ingredients to get better recipe suggestions.</p>
-      </header>
-
+    <div className="space-y-8">
       <Card>
-        <form onSubmit={handleAddItem} className="flex flex-wrap gap-4">
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Ingredient Name</label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-              <input 
-                type="text" 
-                value={newItem}
-                onChange={(e) => setNewItem(e.target.value)}
-                placeholder="e.g. Fresh Salmon" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 focus:outline-none focus:border-orange-600 transition-colors"
-              />
-            </div>
-          </div>
-          <div className="w-24">
-            <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Qty</label>
-            <input 
-              type="number" 
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2 px-4 focus:outline-none focus:border-orange-600 transition-colors"
-            />
-          </div>
-          <div className="w-32">
-            <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Unit</label>
-            <select 
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2 px-4 focus:outline-none focus:border-orange-600 transition-colors appearance-none"
-            >
-              <option>pcs</option>
-              <option>kg</option>
-              <option>g</option>
-              <option>ml</option>
-              <option>oz</option>
-            </select>
-          </div>
-          <div className="flex items-end">
-            <Button type="submit" className="h-11">
-              <Plus className="w-5 h-5" />
-            </Button>
-          </div>
-        </form>
+        <h3 className="text-2xl font-bold mb-6">Add to Fridge</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <input 
+            type="text" 
+            placeholder="Item Name" 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.name}
+            onChange={e => setNewItem({...newItem, name: e.target.value})}
+          />
+          <input 
+            type="text" 
+            placeholder="Quantity" 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.quantity}
+            onChange={e => setNewItem({...newItem, quantity: e.target.value})}
+          />
+          <select 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.unit}
+            onChange={e => setNewItem({...newItem, unit: e.target.value})}
+          >
+            <option value="pcs">pcs</option>
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="ml">ml</option>
+            <option value="l">l</option>
+          </select>
+          <Button onClick={handleAdd}>Add Item</Button>
+        </div>
       </Card>
 
-      <div className="grid gap-3">
-        <AnimatePresence mode="popLayout">
-          {items.map((item, i) => (
-            <motion.div
-              key={item.id}
-              layout
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ delay: i * 0.05 }}
-              className="flex items-center justify-between p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl group"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-zinc-800 rounded-xl flex items-center justify-center">
-                  <Utensils className="w-5 h-5 text-zinc-500" />
-                </div>
-                <div>
-                  <p className="font-bold">{item.name}</p>
-                  <p className="text-xs text-zinc-500">Added {new Date(item.addedAt?.toDate()).toLocaleDateString()}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-6">
-                <span className="text-sm font-medium text-zinc-400">{item.quantity} {item.unit}</span>
-                <button 
-                  onClick={() => handleDeleteItem(item.id)}
-                  className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-        {items.length === 0 && (
-          <div className="text-center py-20 border-2 border-dashed border-zinc-900 rounded-3xl">
-            <Refrigerator className="w-16 h-16 mx-auto mb-4 text-zinc-800" />
-            <p className="text-zinc-600">Your fridge is empty. Add some ingredients!</p>
-          </div>
-        )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {items.map(item => (
+          <Card key={item.id} className="flex items-center justify-between">
+            <div>
+              <p className="font-bold">{item.name}</p>
+              <p className="text-sm text-zinc-500">{item.quantity} {item.unit}</p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => handleDelete(item.id)}>
+              <Trash2 className="w-4 h-4 text-red-500" />
+            </Button>
+          </Card>
+        ))}
       </div>
     </div>
   );
 }
 
-function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile }: { user: FirebaseUser, fridgeItems: any[], savedRecipes: any[], userProfile: any }) {
+function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefresh }: { user: any, fridgeItems: any[], savedRecipes: any[], userProfile: any, onRefresh: () => void }) {
   const [isGenerating, setIsGenerating] = useState(false);
-  const [currentRecipe, setCurrentRecipe] = useState<Recipe | null>(null);
-  const [activeStep, setActiveStep] = useState<number | null>(null);
-  const [isVoiceGuided, setIsVoiceGuided] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [generatedRecipe, setGeneratedRecipe] = useState<Recipe | null>(null);
 
   const handleGenerate = async () => {
     if (fridgeItems.length === 0) {
-      alert('Add some items to your fridge first!');
+      alert("Add some items to your fridge first!");
       return;
     }
     setIsGenerating(true);
     try {
       const ingredients = fridgeItems.map(i => i.name);
-      const recipe = await generateRecipe(ingredients, userProfile?.preferredCuisine);
-      setCurrentRecipe(recipe);
-      setActiveStep(null);
-      setIsVoiceGuided(false);
+      const recipe = await generateRecipe(ingredients, userProfile?.preferred_cuisine);
+      setGeneratedRecipe(recipe);
     } catch (e) {
-      console.error('Recipe generation failed', e);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    
-    setIsGenerating(true);
-    try {
-      const recipe = await searchRecipeByName(searchQuery);
-      setCurrentRecipe(recipe);
-      setActiveStep(null);
-      setIsVoiceGuided(false);
-      setSearchQuery('');
-    } catch (e) {
-      console.error('Recipe search failed', e);
+      console.error(e);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleSave = async () => {
-    if (!currentRecipe) return;
-    try {
-      await addDoc(collection(db, 'users', user.uid, 'recipes'), {
-        ...currentRecipe,
-        generatedAt: serverTimestamp(),
-      });
-      setCurrentRecipe(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `users/${user.uid}/recipes`);
-    }
+    if (!generatedRecipe) return;
+    await api.saveRecipe(user.id, generatedRecipe);
+    setGeneratedRecipe(null);
+    onRefresh();
   };
-
-  const addToGroceryList = async (ingredients: string[]) => {
-    try {
-      const ref = collection(db, 'users', user.uid, 'groceryList');
-      for (const ing of ingredients) {
-        await addDoc(ref, {
-          name: ing,
-          checked: false,
-          addedAt: serverTimestamp()
-        });
-      }
-      alert('Ingredients added to your grocery list!');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'groceryList');
-    }
-  };
-
-  const speakStep = (index: number) => {
-    if (!currentRecipe) return;
-    const step = currentRecipe.instructions[index];
-    const utterance = new SpeechSynthesisUtterance(`Step ${index + 1}: ${step}`);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    setActiveStep(index);
-  };
-
-  const toggleVoiceGuided = () => {
-    if (isVoiceGuided) {
-      setIsVoiceGuided(false);
-      window.speechSynthesis.cancel();
-    } else {
-      setIsVoiceGuided(true);
-      speakStep(0);
-    }
-  };
-
-  useEffect(() => {
-    if (!isVoiceGuided || !currentRecipe) return;
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event: any) => {
-      const command = event.results[event.results.length - 1][0].transcript.toLowerCase();
-      if (command.includes('next')) {
-        const next = (activeStep ?? -1) + 1;
-        if (next < currentRecipe.instructions.length) speakStep(next);
-      } else if (command.includes('repeat')) {
-        if (activeStep !== null) speakStep(activeStep);
-      } else if (command.includes('previous') || command.includes('back')) {
-        const prev = (activeStep ?? 0) - 1;
-        if (prev >= 0) speakStep(prev);
-      }
-    };
-
-    recognition.start();
-    return () => recognition.stop();
-  }, [isVoiceGuided, currentRecipe, activeStep]);
 
   return (
     <div className="space-y-8">
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-4xl font-bold tracking-tight">Recipe Explorer</h2>
-          <p className="text-zinc-500">Search for any dish or craft recipes from your fridge.</p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
-          <form onSubmit={handleSearch} className="relative flex-1 sm:w-80 flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-              <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search or paste a recipe..." 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-full py-2 pl-10 pr-10 focus:outline-none focus:border-orange-600 transition-colors text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                  if (!SpeechRecognition) return;
-                  const recognition = new SpeechRecognition();
-                  recognition.lang = 'en-US';
-                  recognition.onresult = (e: any) => setSearchQuery(e.results[0][0].transcript);
-                  recognition.start();
-                }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-orange-500 transition-colors"
-              >
-                <Mic className="w-4 h-4" />
-              </button>
+      <Card className="text-center py-12">
+        <Utensils className="w-12 h-12 text-orange-600 mx-auto mb-4" />
+        <h3 className="text-3xl font-bold mb-4">Generate AI Recipe</h3>
+        <p className="text-zinc-500 mb-8 max-w-md mx-auto">We'll use your current fridge items to craft a professional recipe tailored to your Taste DNA.</p>
+        <Button size="lg" onClick={handleGenerate} disabled={isGenerating}>
+          {isGenerating ? 'Crafting Recipe...' : 'Generate from Fridge'}
+        </Button>
+      </Card>
+
+      {generatedRecipe && (
+        <Card className="border-orange-600/30 bg-orange-600/5">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <Badge className="mb-2">New AI Recipe</Badge>
+              <h3 className="text-3xl font-bold">{generatedRecipe.title}</h3>
             </div>
-            <Button type="submit" size="sm" className="rounded-full px-4">Search</Button>
-          </form>
-          <Button onClick={handleGenerate} disabled={isGenerating} size="lg" className="rounded-full whitespace-nowrap">
-            {isGenerating ? 'Crafting...' : 'Craft from Fridge'}
-            <Zap className="ml-2 w-5 h-5 fill-current" />
-          </Button>
-        </div>
-      </header>
-
-      <AnimatePresence>
-        {currentRecipe && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="bg-zinc-900 border border-orange-600/30 rounded-3xl overflow-hidden shadow-2xl shadow-orange-600/10"
-          >
-            <div className="p-8 md:p-12">
-              <div className="flex flex-wrap items-start justify-between gap-6 mb-8">
-                <div className="flex-1">
-                  <Badge className="mb-4">AI Analysis & Generation</Badge>
-                  <h3 className="text-4xl font-bold mb-4">{currentRecipe.title}</h3>
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold uppercase tracking-widest text-orange-500">Benefits & Profile</p>
-                    <p className="text-zinc-400 text-lg max-w-2xl leading-relaxed">{currentRecipe.description}</p>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-3">
-                  <Button onClick={handleSave} className="w-full">Save to Collection</Button>
-                  <Button variant="secondary" onClick={() => addToGroceryList(currentRecipe.ingredients)} className="w-full">
-                    <ShoppingCart className="w-4 h-4 mr-2" />
-                    Add to Grocery List
-                  </Button>
-                  <Button variant="ghost" onClick={() => setCurrentRecipe(null)} className="w-full">Discard</Button>
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-3 gap-12">
-                <div className="md:col-span-1 space-y-8">
-                  <div className="flex gap-4">
-                    <div className="flex-1 p-4 bg-zinc-950 rounded-2xl border border-zinc-800">
-                      <Clock className="w-5 h-5 text-orange-500 mb-2" />
-                      <p className="text-xs text-zinc-500 uppercase font-bold">Time</p>
-                      <p className="font-bold">{currentRecipe.time}</p>
-                    </div>
-                    <div className="flex-1 p-4 bg-zinc-950 rounded-2xl border border-zinc-800">
-                      <Zap className="w-5 h-5 text-orange-500 mb-2" />
-                      <p className="text-xs text-zinc-500 uppercase font-bold">Difficulty</p>
-                      <p className="font-bold">{currentRecipe.difficulty}</p>
-                    </div>
-                  </div>
-
-                  {currentRecipe.nutrition && (
-                    <div className="p-6 bg-zinc-950 rounded-2xl border border-zinc-800">
-                      <h4 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Nutritional Info</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-[10px] text-zinc-500 uppercase">Calories</p>
-                          <p className="font-bold text-orange-500">{currentRecipe.nutrition.calories}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-zinc-500 uppercase">Protein</p>
-                          <p className="font-bold">{currentRecipe.nutrition.protein}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-zinc-500 uppercase">Carbs</p>
-                          <p className="font-bold">{currentRecipe.nutrition.carbs}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-zinc-500 uppercase">Fat</p>
-                          <p className="font-bold">{currentRecipe.nutrition.fat}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <h4 className="text-sm font-bold uppercase tracking-widest text-zinc-500 mb-4">Ingredients</h4>
-                    <ul className="space-y-3">
-                      {currentRecipe.ingredients.map((ing, i) => (
-                        <li key={i} className="flex items-center gap-3 text-zinc-300">
-                          <div className="w-1.5 h-1.5 rounded-full bg-orange-600" />
-                          {ing}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="flex items-center justify-between mb-6">
-                    <h4 className="text-sm font-bold uppercase tracking-widest text-zinc-500">Instructions</h4>
-                    <div className="flex items-center gap-4">
-                      {isVoiceGuided && (
-                        <div className="flex items-center gap-2 px-3 py-1 bg-orange-600/10 rounded-full animate-pulse">
-                          <div className="w-2 h-2 bg-orange-500 rounded-full" />
-                          <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">Listening: "Next", "Repeat", "Back"</span>
-                        </div>
-                      )}
-                      <Button 
-                        variant={isVoiceGuided ? 'primary' : 'secondary'} 
-                        size="sm" 
-                        onClick={toggleVoiceGuided}
-                        className="rounded-full"
-                      >
-                        {isVoiceGuided ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
-                        {isVoiceGuided ? 'Stop Voice Guide' : 'Start Voice Guide'}
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="space-y-6">
-                    {currentRecipe.instructions.map((step, i) => (
-                      <motion.div 
-                        key={i} 
-                        className={cn(
-                          "flex gap-6 p-4 rounded-2xl transition-all duration-300 cursor-pointer",
-                          activeStep === i ? "bg-orange-600/10 border border-orange-600/20 scale-[1.02]" : "opacity-70 hover:opacity-100"
-                        )}
-                        onClick={() => speakStep(i)}
-                      >
-                        <span className={cn(
-                          "text-2xl font-bold tabular-nums",
-                          activeStep === i ? "text-orange-500" : "text-zinc-800"
-                        )}>
-                          {(i + 1).toString().padStart(2, '0')}
-                        </span>
-                        <p className={cn(
-                          "text-zinc-300 leading-relaxed pt-1",
-                          activeStep === i && "text-white font-medium"
-                        )}>{step}</p>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            <Button onClick={handleSave}>Save to Collection</Button>
+          </div>
+          <p className="text-zinc-400 mb-6">{generatedRecipe.description}</p>
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h4 className="font-bold mb-4 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Ingredients</h4>
+              <ul className="space-y-2 text-sm text-zinc-400">
+                {generatedRecipe.ingredients.map((ing, i) => <li key={i}>• {ing}</li>)}
+              </ul>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {savedRecipes.map((recipe) => (
-          <Card key={recipe.id} className="group cursor-pointer hover:border-orange-600/30 transition-all flex flex-col">
-            <div className="flex items-start justify-between mb-4">
-              <Badge>{recipe.cuisine}</Badge>
-              {recipe.nutrition && (
-                <span className="text-[10px] font-bold text-zinc-500">{recipe.nutrition.calories} kcal</span>
-              )}
+            <div>
+              <h4 className="font-bold mb-4 flex items-center gap-2"><Clock className="w-4 h-4 text-orange-500" /> Instructions</h4>
+              <ol className="space-y-4 text-sm text-zinc-400">
+                {generatedRecipe.instructions.map((inst, i) => <li key={i}>{i+1}. {inst}</li>)}
+              </ol>
             </div>
-            <h3 className="text-xl font-bold mb-2 group-hover:text-orange-500 transition-colors">{recipe.title}</h3>
-            <p className="text-sm text-zinc-500 line-clamp-2 mb-6 flex-1">{recipe.description}</p>
-            <div className="flex items-center justify-between text-xs font-bold text-zinc-600 uppercase tracking-wider">
-              <div className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {recipe.time}
-              </div>
-              <div className="flex items-center gap-1">
-                <Zap className="w-3 h-3" />
-                {recipe.difficulty}
-              </div>
+          </div>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {savedRecipes.map(recipe => (
+          <Card key={recipe.id}>
+            <div className="flex justify-between items-start mb-4">
+              <h4 className="text-xl font-bold">{recipe.title}</h4>
+              <Button variant="ghost" size="sm" onClick={() => api.deleteRecipe(recipe.id).then(onRefresh)}>
+                <Trash2 className="w-4 h-4 text-red-500" />
+              </Button>
+            </div>
+            <p className="text-sm text-zinc-500 line-clamp-2 mb-4">{recipe.description}</p>
+            <div className="flex items-center gap-4 text-xs text-zinc-600">
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {recipe.time}</span>
+              <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> {recipe.difficulty}</span>
             </div>
           </Card>
         ))}
-        {savedRecipes.length === 0 && !currentRecipe && (
-          <div className="md:col-span-3 text-center py-20 bg-zinc-900/20 border-2 border-dashed border-zinc-900 rounded-3xl">
-            <Utensils className="w-16 h-16 mx-auto mb-4 text-zinc-800" />
-            <p className="text-zinc-600">No saved recipes yet. Generate one to get started!</p>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function TasteDNA({ user, profile }: { user: FirebaseUser, profile: any }) {
+function TasteDNA({ user, profile, onRefresh }: { user: any, profile: any, onRefresh: () => void }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [prefs, setPrefs] = useState(profile?.preferredCuisine || 'Mediterranean');
+  const [prefs, setPrefs] = useState('');
 
   const handleAnalyze = async () => {
+    if (!prefs) return;
     setIsAnalyzing(true);
     try {
-      const dna = await analyzeTasteDNA(`I love ${prefs}. I enjoy complex flavors.`);
-      await updateDoc(doc(db, 'users', user.uid), {
-        tasteDNA: dna,
-        preferredCuisine: prefs,
-      });
+      const dna = await analyzeTasteDNA(prefs);
+      await api.updateUser(user.id, { taste_dna: dna });
+      onRefresh();
+      setPrefs('');
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
+      console.error(e);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const dnaData = [
-    { subject: 'Sweetness', A: profile?.tasteDNA?.sweetness || 50, fullMark: 100 },
-    { subject: 'Saltiness', A: profile?.tasteDNA?.saltiness || 50, fullMark: 100 },
-    { subject: 'Spiciness', A: profile?.tasteDNA?.spiciness || 50, fullMark: 100 },
-    { subject: 'Umami', A: profile?.tasteDNA?.umami || 50, fullMark: 100 },
-    { subject: 'Acidity', A: profile?.tasteDNA?.acidity || 50, fullMark: 100 },
-  ];
-
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <header>
-        <h2 className="text-4xl font-bold tracking-tight">Taste DNA</h2>
-        <p className="text-zinc-500">Your unique culinary fingerprint, analyzed by AI.</p>
-      </header>
-
+    <div className="space-y-8">
       <div className="grid md:grid-cols-2 gap-8">
-        <Card className="flex flex-col items-center justify-center p-12">
-          <div className="h-80 w-full">
+        <Card>
+          <h3 className="text-2xl font-bold mb-6">Analyze Your Taste</h3>
+          <p className="text-zinc-500 mb-6">Tell us what you like (e.g., "I love spicy Thai food but hate sweet desserts") and we'll update your Taste DNA.</p>
+          <textarea 
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 focus:border-orange-600 outline-none h-32 mb-4"
+            placeholder="Describe your preferences..."
+            value={prefs}
+            onChange={e => setPrefs(e.target.value)}
+          />
+          <Button onClick={handleAnalyze} disabled={isAnalyzing} className="w-full">
+            {isAnalyzing ? 'Analyzing DNA...' : 'Update Taste DNA'}
+          </Button>
+        </Card>
+
+        <Card>
+          <h3 className="text-2xl font-bold mb-6">Your Profile</h3>
+          <div className="h-64 w-full mb-6">
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={dnaData}>
+              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={[
+                { subject: 'Sweet', A: profile?.taste_dna?.sweetness || 50 },
+                { subject: 'Salt', A: profile?.taste_dna?.saltiness || 50 },
+                { subject: 'Spice', A: profile?.taste_dna?.spiciness || 50 },
+                { subject: 'Umami', A: profile?.taste_dna?.umami || 50 },
+                { subject: 'Acid', A: profile?.taste_dna?.acidity || 50 },
+              ]}>
                 <PolarGrid stroke="#27272a" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#71717a', fontSize: 14, fontWeight: 600 }} />
-                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar
-                  name="Taste DNA"
-                  dataKey="A"
-                  stroke="#ea580c"
-                  fill="#ea580c"
-                  fillOpacity={0.6}
-                />
+                <PolarAngleAxis dataKey="subject" tick={{ fill: '#71717a', fontSize: 10, fontWeight: 600 }} />
+                <Radar name="User" dataKey="A" stroke="#ea580c" fill="#ea580c" fillOpacity={0.6} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-8 text-center">
-            <p className="text-sm text-zinc-500 uppercase tracking-widest font-bold mb-2">Primary Profile</p>
-            <p className="text-3xl font-bold text-white">Balanced Explorer</p>
+          <div className="space-y-4">
+            <div className="flex justify-between text-sm">
+              <span className="text-zinc-500">Preferred Cuisine</span>
+              <span className="font-bold text-orange-500">{profile?.preferred_cuisine}</span>
+            </div>
           </div>
         </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <h3 className="text-xl font-bold mb-6">Refine Your Profile</h3>
-            <div className="space-y-6">
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase mb-3">Preferred Cuisine</label>
-                <select 
-                  value={prefs}
-                  onChange={(e) => setPrefs(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 focus:outline-none focus:border-orange-600 transition-colors appearance-none"
-                >
-                  <option>Mediterranean</option>
-                  <option>Asian Fusion</option>
-                  <option>Classic French</option>
-                  <option>Spicy Mexican</option>
-                  <option>Nordic Minimalist</option>
-                  <option>Traditional Italian</option>
-                </select>
-              </div>
-              <Button onClick={handleAnalyze} disabled={isAnalyzing} className="w-full py-4">
-                {isAnalyzing ? 'Analyzing Preferences...' : 'Update Taste DNA'}
-                <Brain className="ml-2 w-5 h-5" />
-              </Button>
-            </div>
-          </Card>
-
-          <Card className="bg-orange-600/5 border-orange-600/20">
-            <div className="flex items-center gap-3 mb-4">
-              <Sparkles className="w-5 h-5 text-orange-500" />
-              <h4 className="font-bold">AI Insight</h4>
-            </div>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              Your profile shows a strong preference for <span className="text-white font-medium">Umami</span> and <span className="text-white font-medium">Acidity</span>. 
-              We'll prioritize recipes with fermented ingredients, citrus highlights, and rich savory bases.
-            </p>
-          </Card>
-        </div>
       </div>
     </div>
   );
 }
 
-function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrade }: { user: FirebaseUser, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, onUpgrade: () => void }) {
+function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, onUpgrade, onRefresh }: { user: any, messages: any[], fridgeItems: any[], savedRecipes: any[], profile: any, onUpgrade: () => void, onRefresh: () => void }) {
   const [input, setInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
-  const [voiceLang, setVoiceLang] = useState('en-US');
-  const [isTyping, setIsTyping] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<{ file: File, preview: string } | null>(null);
-  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const recognitionRef = React.useRef<any>(null);
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isTyping]);
+  const isPro = profile?.status === 'pro';
+  const uploadCount = profile?.image_upload_count || 0;
 
-  // Cleanup recognition on unmount
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
-  }, []);
-
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setSelectedImage({ file, preview: reader.result as string });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const checkImageLimit = async () => {
-    if (profile?.subscription?.status === 'pro') return true;
-
-    const now = new Date();
-    const lastUpload = profile?.lastImageUploadAt?.toDate?.() || new Date(0);
-    const count = profile?.imageUploadCount || 0;
-
-    // Reset after 24 hours
-    if (now.getTime() - lastUpload.getTime() > 24 * 60 * 60 * 1000) {
-      return true;
-    }
-
-    if (count >= 4) {
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleSend = async (text?: string, isVoice: boolean = false) => {
-    const messageText = text || input;
-    if (!messageText.trim() && !selectedImage) return;
-
-    // Check image limit if an image is selected
-    if (selectedImage) {
-      const canUpload = await checkImageLimit();
-      if (!canUpload) {
-        alert("You’ve reached your free image upload limit (4 images). Upgrade to premium or try again after 24 hours.");
-        onUpgrade();
-        return;
-      }
-    }
-
-    setInput('');
-    setIsTyping(true);
-
-    try {
-      const chatRef = collection(db, 'users', user.uid, 'chat');
-      let imageData: { data: string, mimeType: string } | undefined;
-      let displayImageUrl: string | null = null;
-
-      if (selectedImage) {
-        // Resize image for Firestore (stay under 1MB)
-        const resizedBase64 = await resizeImage(selectedImage.preview, 800, 800, 0.7);
-        displayImageUrl = resizedBase64;
-
-        const base64Data = resizedBase64.split(',')[1];
-        imageData = { data: base64Data, mimeType: 'image/jpeg' };
-        
-        // Update image upload count
-        const now = new Date();
-        const lastUpload = profile?.lastImageUploadAt?.toDate?.() || new Date(0);
-        let newCount = (profile?.imageUploadCount || 0) + 1;
-        
-        // Reset count if more than 24h passed
-        if (now.getTime() - lastUpload.getTime() > 24 * 60 * 60 * 1000) {
-          newCount = 1;
-        }
-
-        await updateDoc(doc(db, 'users', user.uid), {
-          imageUploadCount: newCount,
-          lastImageUploadAt: serverTimestamp()
-        });
-      }
-
-      await addDoc(chatRef, {
-        role: 'user',
-        content: messageText || (selectedImage ? "Analyzed an image" : ""),
-        imageUrl: displayImageUrl,
-        timestamp: serverTimestamp(),
-        isVoice: isVoice
-      });
-
-      const context = {
-        fridge: fridgeItems.map(i => `${i.quantity} ${i.unit} ${i.name}`),
-        recipes: savedRecipes.map(r => r.title),
-        profile: profile
-      };
-
-      const response = await chatWithChef(messageText, messages.slice(-10), context, imageData);
-      
-      await addDoc(chatRef, {
-        role: 'model',
-        content: response,
-        timestamp: serverTimestamp()
-      });
-
-      setSelectedImage(null);
-
-      // Voice output only if input was voice or voiceMode is active
-      if (isVoice || voiceMode) {
-        speakText(response);
-      }
-
-    } catch (error) {
-      console.error('Chat error:', error);
-    } finally {
-      setIsTyping(false);
-    }
-  };
-
-  const speakText = (text: string) => {
-    window.speechSynthesis.cancel();
+  const speak = (text: string) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    if (/[آ-ی]/.test(text)) {
-      utterance.lang = 'ur-PK';
-    } else {
-      utterance.lang = 'en-US';
-    }
-
-    utterance.onend = () => {
-      if (voiceMode) {
-        startListening();
-      }
-    };
-
     window.speechSynthesis.speak(utterance);
   };
 
-  const startListening = (lang?: string) => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+  const startListening = () => {
+    if (!('webkitSpeechRecognition' in window)) {
+      alert("Speech recognition not supported in this browser.");
+      return;
     }
-
-    const recognition = new SpeechRecognition();
+    const recognition = new (window as any).webkitSpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = lang || voiceLang;
-
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      handleSend(transcript, true);
+      setInput(transcript);
     };
-
-    recognitionRef.current = recognition;
     recognition.start();
   };
 
-  const toggleVoiceMode = () => {
-    if (voiceMode) {
-      setVoiceMode(false);
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      window.speechSynthesis.cancel();
-    } else {
-      setVoiceMode(true);
-      startListening();
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!isPro && uploadCount >= 3) {
+      alert("You have reached the free limit of 3 image uploads. Please upgrade to Pro to continue uploading images.");
+      onUpgrade();
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      const data = base64.split(',')[1];
+      const mimeType = file.type;
+      setSelectedImage({ data, mimeType });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSend = async () => {
+    if (!input && !selectedImage) return;
+    
+    const userMsg = { role: 'user' as const, content: input || "Sent an image" };
+    await api.addChatMessage(user.id, userMsg);
+    
+    if (selectedImage) {
+      await api.incrementImageCount(user.id);
+    }
+
+    const currentInput = input;
+    const currentImage = selectedImage;
+    
+    setInput('');
+    setSelectedImage(null);
+    setIsSending(true);
+    onRefresh();
+
+    try {
+      const history = messages.map(m => ({ role: m.role as "user" | "model", content: m.content }));
+      const context = {
+        fridge: fridgeItems.map(i => i.name),
+        recipes: savedRecipes.map(r => r.title),
+        profile
+      };
+      const response = await chatWithChef(currentInput, history, context, currentImage || undefined);
+      await api.addChatMessage(user.id, { role: 'model', content: response });
+      onRefresh();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSending(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto h-[calc(100vh-12rem)] flex flex-col">
-      <Card className="flex-1 flex flex-col overflow-hidden p-0">
-        <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-orange-600/20 flex items-center justify-center">
-              <ChefHat className="w-6 h-6 text-orange-600" />
+    <Card className="h-[600px] flex flex-col">
+      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+        {messages.map((m, i) => (
+          <div key={i} className={cn("flex flex-col", m.role === 'user' ? "items-end" : "items-start")}>
+            <div className={cn(
+              "max-w-[80%] p-3 rounded-2xl text-sm",
+              m.role === 'user' ? "bg-orange-600 text-white" : "bg-zinc-800 text-zinc-100"
+            )}>
+              {m.content}
             </div>
-            <div>
-              <h2 className="font-bold">Chef AI</h2>
-              <p className="text-xs text-zinc-500">Smart Multimodal Assistant</p>
-            </div>
-          </div>
-          {profile?.subscription?.status !== 'pro' && (
-            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-              Images: {profile?.imageUploadCount || 0}/4 Free
-            </div>
-          )}
-        </div>
-
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
-          {messages.length === 0 && (
-            <div className="text-center py-12 text-zinc-500">
-              <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Ask me anything! Type, speak, or upload an image of your food.</p>
-            </div>
-          )}
-          {messages.map((msg, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10, x: msg.role === 'user' ? 20 : -20 }}
-              animate={{ opacity: 1, y: 0, x: 0 }}
-              transition={{ delay: i * 0.05 }}
-              className={cn(
-                "flex",
-                msg.role === 'user' ? "justify-end" : "justify-start"
-              )}
-            >
-              <div className={cn(
-                "max-w-[80%] p-3 rounded-2xl space-y-2 relative group",
-                msg.role === 'user' 
-                  ? "bg-orange-600 text-white rounded-tr-none" 
-                  : "bg-zinc-800 text-zinc-100 rounded-tl-none"
-              )}>
-                {msg.imageUrl && (
-                  <img src={msg.imageUrl} alt="Uploaded" className="rounded-lg max-h-48 w-full object-cover border border-white/10" />
-                )}
-                <p className="text-sm leading-relaxed">{msg.content}</p>
-                {msg.role === 'model' && (
-                  <button 
-                    onClick={() => speakText(msg.content)}
-                    className="absolute -right-8 top-0 p-2 text-zinc-500 hover:text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Speak response"
-                  >
-                    <Volume2 className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          ))}
-          {isTyping && (
-            <div className="flex justify-start">
-              <div className="bg-zinc-800 p-3 rounded-2xl rounded-tl-none flex gap-1">
-                <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1 }} className="w-1.5 h-1.5 bg-zinc-500 rounded-full" />
-                <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="w-1.5 h-1.5 bg-zinc-500 rounded-full" />
-                <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} className="w-1.5 h-1.5 bg-zinc-500 rounded-full" />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="p-4 border-t border-zinc-800 space-y-4">
-          {selectedImage && (
-            <div className="relative inline-block">
-              <img src={selectedImage.preview} alt="Preview" className="w-20 h-20 object-cover rounded-xl border border-orange-600/50" />
+            {m.role === 'model' && (
               <button 
-                onClick={() => setSelectedImage(null)}
-                className="absolute -top-2 -right-2 bg-zinc-900 text-white rounded-full p-1 border border-zinc-800"
+                onClick={() => speak(m.content)}
+                className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500 hover:text-orange-500 transition-colors"
               >
-                <X className="w-3 h-3" />
+                <Volume2 className="w-3 h-3" />
+                Speak
               </button>
-            </div>
-          )}
-          <div className="flex gap-2">
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleImageSelect} 
-              accept="image/*" 
-              className="hidden" 
-            />
-            <Button 
-              variant="secondary" 
-              size="sm" 
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImageIcon className="w-4 h-4" />
-            </Button>
-            <Button 
-              variant={voiceMode ? 'primary' : 'secondary'} 
-              size="sm" 
-              onClick={toggleVoiceMode}
-              className={cn(voiceMode && "animate-pulse")}
-            >
-              {voiceMode ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </Button>
-            {voiceMode && (
-              <Button 
-                variant="secondary" 
-                size="sm" 
-                onClick={() => {
-                  const newLang = voiceLang === 'en-US' ? 'ur-PK' : 'en-US';
-                  setVoiceLang(newLang);
-                  if (voiceMode) startListening(newLang);
-                }}
-                className="text-[10px] font-bold"
-              >
-                {voiceLang === 'en-US' ? 'EN' : 'UR'}
-              </Button>
             )}
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Type your message..."
-              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-orange-600 transition-colors"
-            />
-            <Button size="sm" onClick={() => handleSend()}>
-              <Send className="w-4 h-4" />
-            </Button>
           </div>
+        ))}
+        {isSending && (
+          <div className="flex justify-start">
+            <div className="bg-zinc-800 p-3 rounded-2xl">
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" />
+                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selectedImage && (
+        <div className="mb-4 relative w-20 h-20">
+          <img src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} className="w-full h-full object-cover rounded-lg" />
+          <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1">
+            <X className="w-3 h-3" />
+          </button>
         </div>
-      </Card>
-    </div>
+      )}
+
+      <div className="flex gap-2">
+        <input 
+          type="file" 
+          accept="image/*" 
+          className="hidden" 
+          ref={fileInputRef} 
+          onChange={handleImageUpload}
+        />
+        <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
+          <ImageIcon className="w-4 h-4" />
+        </Button>
+        <Button variant="ghost" size="sm" onClick={startListening} className={cn(isListening && "text-orange-500 animate-pulse")}>
+          {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+        </Button>
+        <input 
+          type="text" 
+          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 outline-none focus:border-orange-600"
+          placeholder="Ask Chef AI..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSend()}
+        />
+        <Button onClick={handleSend} disabled={isSending}><Send className="w-4 h-4" /></Button>
+      </div>
+      {!isPro && (
+        <p className="mt-2 text-[10px] text-zinc-600 text-center">
+          Free image uploads: {uploadCount}/3. <button onClick={onUpgrade} className="text-orange-500 hover:underline">Upgrade to Pro</button>
+        </p>
+      )}
+    </Card>
   );
 }
 
-function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade }: { user: FirebaseUser, plans: any[], savedRecipes: any[], isPro: boolean, onUpgrade: () => void }) {
-  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  const mealTypes = ['breakfast', 'lunch', 'dinner'];
+function MealPlanner({ user, plans, savedRecipes, isPro, onUpgrade, onRefresh }: { user: any, plans: any[], savedRecipes: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void }) {
+  const [newPlan, setNewPlan] = useState({ recipe_id: 0, date: new Date().toISOString().split('T')[0], meal_type: 'Dinner' });
 
-  const addMeal = async (day: string, type: string, recipe: any) => {
-    try {
-      const mealRef = collection(db, 'users', user.uid, 'mealPlan');
-      await addDoc(mealRef, {
-        date: day,
-        mealType: type,
-        recipeId: recipe.id,
-        recipeTitle: recipe.title,
-        timestamp: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'mealPlan');
-    }
+  const handleAdd = async () => {
+    if (!newPlan.recipe_id) return;
+    await api.addMealPlan(user.id, newPlan);
+    onRefresh();
   };
 
   if (!isPro) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20">
-        <div className="w-20 h-20 bg-orange-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Calendar className="w-10 h-10 text-orange-600" />
-        </div>
-        <h2 className="text-3xl font-bold mb-4">Weekly Meal Planning</h2>
-        <p className="text-zinc-400 mb-8">Take the guesswork out of your week. Plan your meals, track nutrition, and stay organized with ChefAI Pro.</p>
-        <Button size="lg" onClick={onUpgrade}>Upgrade to Pro</Button>
-      </div>
+      <Card className="text-center py-20">
+        <Calendar className="w-12 h-12 text-orange-600 mx-auto mb-4" />
+        <h3 className="text-3xl font-bold mb-4">Meal Planning is a Pro Feature</h3>
+        <p className="text-zinc-500 mb-8 max-w-md mx-auto">Upgrade to Pro to schedule your meals and sync them with your grocery list.</p>
+        <Button onClick={onUpgrade}>Upgrade to Pro</Button>
+      </Card>
     );
   }
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold">Meal Planner</h2>
-        <Badge>Pro Feature</Badge>
-      </div>
+      <Card>
+        <h3 className="text-2xl font-bold mb-6">Schedule a Meal</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <select 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newPlan.recipe_id}
+            onChange={e => setNewPlan({...newPlan, recipe_id: parseInt(e.target.value)})}
+          >
+            <option value={0}>Select Recipe</option>
+            {savedRecipes.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
+          </select>
+          <input 
+            type="date" 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newPlan.date}
+            onChange={e => setNewPlan({...newPlan, date: e.target.value})}
+          />
+          <select 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newPlan.meal_type}
+            onChange={e => setNewPlan({...newPlan, meal_type: e.target.value})}
+          >
+            <option value="Breakfast">Breakfast</option>
+            <option value="Lunch">Lunch</option>
+            <option value="Dinner">Dinner</option>
+            <option value="Snack">Snack</option>
+          </select>
+          <Button onClick={handleAdd}>Add to Plan</Button>
+        </div>
+      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-        {days.map(day => (
-          <div key={day} className="space-y-4">
-            <h3 className="font-bold text-orange-500 text-sm">{day}</h3>
-            {mealTypes.map(type => {
-              const meal = plans.find(p => p.date === day && p.mealType === type);
-              return (
-                <Card key={type} className="p-3 bg-zinc-900/30">
-                  <p className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1">{type}</p>
-                  {meal ? (
-                    <div className="flex items-center justify-between group">
-                      <span className="text-xs font-medium truncate">{meal.recipeTitle}</span>
-                      <button 
-                        onClick={() => deleteDoc(doc(db, 'users', user.uid, 'mealPlan', meal.id))}
-                        className="opacity-0 group-hover:opacity-100 text-red-500 transition-opacity"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <select 
-                      onChange={(e) => {
-                        const recipe = savedRecipes.find(r => r.id === e.target.value);
-                        if (recipe) addMeal(day, type, recipe);
-                      }}
-                      className="w-full bg-transparent text-[10px] text-zinc-400 focus:outline-none cursor-pointer"
-                    >
-                      <option value="">+ Add</option>
-                      {savedRecipes.map(r => (
-                        <option key={r.id} value={r.id}>{r.title}</option>
-                      ))}
-                    </select>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
+      <div className="space-y-4">
+        {plans.map(plan => (
+          <Card key={plan.id} className="flex items-center justify-between py-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-zinc-800 rounded-xl text-orange-500 font-bold text-xs">
+                {new Date(plan.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </div>
+              <div>
+                <p className="font-bold">{plan.recipe_title}</p>
+                <p className="text-xs text-zinc-500">{plan.meal_type}</p>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => api.deleteMealPlan(plan.id).then(onRefresh)}>
+              <Trash2 className="w-4 h-4 text-red-500" />
+            </Button>
+          </Card>
         ))}
       </div>
     </div>
   );
 }
 
-function GroceryList({ user, items, isPro, onUpgrade }: { user: FirebaseUser, items: any[], isPro: boolean, onUpgrade: () => void }) {
-  const [newItem, setNewItem] = useState('');
+function GroceryList({ user, items, isPro, onUpgrade, onRefresh }: { user: any, items: any[], isPro: boolean, onUpgrade: () => void, onRefresh: () => void }) {
+  const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'pcs' });
 
-  const addItem = async () => {
-    if (!newItem.trim()) return;
-    try {
-      const ref = collection(db, 'users', user.uid, 'groceryList');
-      await addDoc(ref, {
-        name: newItem,
-        checked: false,
-        addedAt: serverTimestamp()
-      });
-      setNewItem('');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'groceryList');
-    }
-  };
-
-  const toggleItem = async (id: string, checked: boolean) => {
-    try {
-      await updateDoc(doc(db, 'users', user.uid, 'groceryList', id), { checked: !checked });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'groceryList');
-    }
+  const handleAdd = async () => {
+    if (!newItem.name) return;
+    await api.addGroceryItem(user.id, newItem);
+    setNewItem({ name: '', quantity: '', unit: 'pcs' });
+    onRefresh();
   };
 
   if (!isPro) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20">
-        <div className="w-20 h-20 bg-orange-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <ShoppingCart className="w-10 h-10 text-orange-600" />
-        </div>
-        <h2 className="text-3xl font-bold mb-4">Smart Grocery Lists</h2>
-        <p className="text-zinc-400 mb-8">Automatically generate grocery lists from your meal plans and keep your kitchen stocked with ChefAI Pro.</p>
-        <Button size="lg" onClick={onUpgrade}>Upgrade to Pro</Button>
-      </div>
+      <Card className="text-center py-20">
+        <ShoppingCart className="w-12 h-12 text-orange-600 mx-auto mb-4" />
+        <h3 className="text-3xl font-bold mb-4">Grocery Sync is a Pro Feature</h3>
+        <p className="text-zinc-500 mb-8 max-w-md mx-auto">Upgrade to Pro to automatically generate grocery lists from your meal plans.</p>
+        <Button onClick={onUpgrade}>Upgrade to Pro</Button>
+      </Card>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold">Grocery List</h2>
-        <Badge>Pro Feature</Badge>
-      </div>
-
-      <Card className="p-4">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newItem}
-            onChange={(e) => setNewItem(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addItem()}
-            placeholder="Add item..."
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-orange-600"
+    <div className="space-y-8">
+      <Card>
+        <h3 className="text-2xl font-bold mb-6">Add to List</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <input 
+            type="text" 
+            placeholder="Item Name" 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.name}
+            onChange={e => setNewItem({...newItem, name: e.target.value})}
           />
-          <Button onClick={addItem}><Plus className="w-4 h-4" /></Button>
+          <input 
+            type="text" 
+            placeholder="Qty" 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.quantity}
+            onChange={e => setNewItem({...newItem, quantity: e.target.value})}
+          />
+          <select 
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 focus:border-orange-600 outline-none"
+            value={newItem.unit}
+            onChange={e => setNewItem({...newItem, unit: e.target.value})}
+          >
+            <option value="pcs">pcs</option>
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+          </select>
+          <Button onClick={handleAdd}>Add</Button>
         </div>
       </Card>
 
       <div className="space-y-2">
-        {items.map((item, i) => (
-          <motion.div
-            key={item.id}
-            layout
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-            className={cn(
-              "flex items-center justify-between p-4 rounded-xl border transition-all",
-              item.checked ? "bg-zinc-900/30 border-zinc-800 opacity-50" : "bg-zinc-900/50 border-zinc-800"
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <button onClick={() => toggleItem(item.id, item.checked)}>
-                {item.checked ? <CheckCircle2 className="w-5 h-5 text-orange-600" /> : <div className="w-5 h-5 rounded-full border-2 border-zinc-700" />}
+        {items.map(item => (
+          <Card key={item.id} className={cn("flex items-center justify-between py-3", item.is_checked && "opacity-50")}>
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => api.updateGroceryItem(item.id, !item.is_checked).then(onRefresh)}
+                className={cn("w-5 h-5 rounded border flex items-center justify-center", item.is_checked ? "bg-orange-600 border-orange-600" : "border-zinc-700")}
+              >
+                {item.is_checked && <CheckCircle2 className="w-3 h-3 text-white" />}
               </button>
-              <span className={cn("text-sm", item.checked && "line-through")}>{item.name}</span>
+              <span className={cn(item.is_checked && "line-through")}>{item.name} ({item.quantity} {item.unit})</span>
             </div>
-            <button onClick={() => deleteDoc(doc(db, 'users', user.uid, 'groceryList', item.id))} className="text-zinc-600 hover:text-red-500">
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </motion.div>
+            <Button variant="ghost" size="sm" onClick={() => api.deleteGroceryItem(item.id).then(onRefresh)}>
+              <Trash2 className="w-4 h-4 text-red-500" />
+            </Button>
+          </Card>
         ))}
-        {items.length === 0 && (
-          <div className="text-center py-12 text-zinc-600">Your list is empty</div>
-        )}
       </div>
     </div>
   );
 }
 
-function SubscriptionPlans({ user, currentSub }: { user: FirebaseUser, currentSub: any }) {
-  const upgrade = async (plan: string) => {
-    try {
-      const subRef = doc(db, 'users', user.uid, 'subscription', 'status');
-      await setDoc(subRef, {
-        status: 'pro',
-        plan,
-        expiresAt: new Date(Date.now() + (plan === 'monthly' ? 30 : 365) * 24 * 60 * 60 * 1000).toISOString()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'subscription');
-    }
+function SubscriptionPlans({ user, currentSub, onRefresh }: { user: any, currentSub: any, onRefresh: () => void }) {
+  const handleUpgrade = async (plan: string) => {
+    await api.updateSubscription(user.id, { status: 'pro', plan });
+    onRefresh();
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-12">
-      <div className="text-center space-y-4">
-        <h2 className="text-4xl font-bold tracking-tight">Level Up Your Cooking</h2>
-        <p className="text-zinc-400 max-w-2xl mx-auto">Unlock advanced AI features, personalized meal planning, and smart grocery management.</p>
-      </div>
+    <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+      <Card className={cn("relative", currentSub?.status === 'free' && "border-orange-600")}>
+        {currentSub?.status === 'free' && <Badge className="absolute top-4 right-4">Current Plan</Badge>}
+        <h3 className="text-2xl font-bold mb-2">Free Tier</h3>
+        <p className="text-4xl font-bold mb-6">$0<span className="text-lg text-zinc-500 font-normal">/mo</span></p>
+        <ul className="space-y-4 mb-8 text-zinc-400">
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Smart Fridge Inventory</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> AI Recipe Generation</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Taste DNA Profile</li>
+          <li className="flex items-center gap-2 text-zinc-600"><X className="w-4 h-4" /> Meal Planning</li>
+          <li className="flex items-center gap-2 text-zinc-600"><X className="w-4 h-4" /> Grocery List Sync</li>
+        </ul>
+        <Button variant="secondary" className="w-full" disabled={currentSub?.status === 'free'}>
+          {currentSub?.status === 'free' ? 'Active' : 'Downgrade'}
+        </Button>
+      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* Free Plan */}
-        <Card className={cn("flex flex-col", currentSub?.status === 'free' && "border-orange-600/50 ring-1 ring-orange-600/50")}>
-          <div className="mb-8">
-            <h3 className="text-xl font-bold mb-2">Free</h3>
-            <div className="flex items-baseline gap-1">
-              <span className="text-4xl font-bold">$0</span>
-              <span className="text-zinc-500">/forever</span>
-            </div>
-          </div>
-          <ul className="space-y-4 mb-8 flex-1">
-            <li className="flex items-center gap-2 text-sm text-zinc-400"><CheckCircle2 className="w-4 h-4 text-orange-600" /> AI Recipe Generation</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-400"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Fridge Management</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-400"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Taste DNA Analysis</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-400"><CheckCircle2 className="w-4 h-4 text-orange-600" /> 4 Image Uploads/day</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-400 opacity-30"><X className="w-4 h-4" /> Weekly Meal Planner</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-400 opacity-30"><X className="w-4 h-4" /> Smart Grocery Lists</li>
-          </ul>
-          <Button variant="secondary" disabled={currentSub?.status === 'free'}>
-            {currentSub?.status === 'free' ? 'Current Plan' : 'Select'}
-          </Button>
-        </Card>
-
-        {/* Monthly Pro */}
-        <Card className={cn("flex flex-col relative", currentSub?.plan === 'monthly' && "border-orange-600/50 ring-1 ring-orange-600/50")}>
-          <div className="mb-8">
-            <h3 className="text-xl font-bold mb-2">Pro Monthly</h3>
-            <div className="flex items-baseline gap-1">
-              <span className="text-4xl font-bold">$9.99</span>
-              <span className="text-zinc-500">/mo</span>
-            </div>
-          </div>
-          <ul className="space-y-4 mb-8 flex-1">
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> All Free Features</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Unlimited Image Uploads</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Weekly Meal Planner</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Smart Grocery Lists</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Priority AI Support</li>
-          </ul>
-          <Button onClick={() => upgrade('monthly')} disabled={currentSub?.plan === 'monthly'}>
-            {currentSub?.plan === 'monthly' ? 'Current Plan' : 'Upgrade Now'}
-          </Button>
-        </Card>
-
-        {/* Yearly Pro */}
-        <Card className={cn("flex flex-col border-orange-600/50 ring-2 ring-orange-600/20 relative overflow-hidden", currentSub?.plan === 'yearly' && "ring-orange-600")}>
-          <div className="absolute top-4 right-4">
-            <Badge className="bg-orange-600 text-white">Save 20%</Badge>
-          </div>
-          <div className="mb-8">
-            <h3 className="text-xl font-bold mb-2">Pro Yearly</h3>
-            <div className="flex items-baseline gap-1">
-              <span className="text-4xl font-bold">$79.99</span>
-              <span className="text-zinc-500">/yr</span>
-            </div>
-          </div>
-          <ul className="space-y-4 mb-8 flex-1">
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Everything in Monthly</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Exclusive Pro Recipes</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Early Access Features</li>
-            <li className="flex items-center gap-2 text-sm text-zinc-100"><CheckCircle2 className="w-4 h-4 text-orange-600" /> Personalized Nutrition</li>
-          </ul>
-          <Button onClick={() => upgrade('yearly')} disabled={currentSub?.plan === 'yearly'}>
-            {currentSub?.plan === 'yearly' ? 'Current Plan' : 'Go Pro Yearly'}
-          </Button>
-        </Card>
-      </div>
+      <Card className={cn("relative border-2", currentSub?.status === 'pro' ? "border-orange-600" : "border-zinc-800")}>
+        {currentSub?.status === 'pro' && <Badge className="absolute top-4 right-4">Active</Badge>}
+        <h3 className="text-2xl font-bold mb-2">Pro Chef</h3>
+        <p className="text-4xl font-bold mb-6">$9.99<span className="text-lg text-zinc-500 font-normal">/mo</span></p>
+        <ul className="space-y-4 mb-8 text-zinc-400">
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Everything in Free</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Advanced Meal Planning</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Smart Grocery Sync</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Priority AI Generation</li>
+          <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-orange-500" /> Custom Taste DNA Tuning</li>
+        </ul>
+        <Button className="w-full" onClick={() => handleUpgrade('monthly')} disabled={currentSub?.status === 'pro'}>
+          {currentSub?.status === 'pro' ? 'Pro Active' : 'Upgrade to Pro'}
+        </Button>
+      </Card>
     </div>
   );
 }

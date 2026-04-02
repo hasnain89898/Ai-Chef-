@@ -1,5 +1,5 @@
 {
-  "name": "ChefAI: Personal Culinary Assistant",
-  "description": "An AI-powered personal chef that manages your fridge, predicts cravings, and generates personalized recipes based on your Taste DNA.",
+  "name": "ChefAI Full-Stack",
+  "description": "A professional culinary intelligence platform with a custom Express backend.",
   "requestFramePermissions": ["microphone"]
 }
