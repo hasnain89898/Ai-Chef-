@@ -313,7 +313,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ChefHat className="w-8 h-8 text-orange-600" />
-            <span className="text-xl font-bold tracking-tighter">CHEF<span className="text-orange-600">AI</span></span>
+            <span className="text-xl font-bold tracking-tighter">CHEF <span className="text-orange-600">AI</span></span>
           </div>
 
           {/* Desktop Nav */}
@@ -524,8 +524,11 @@ function LoginModal({ onClose, onLogin }: { onClose: () => void, onLogin: (email
           <div className="w-16 h-16 bg-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
             <ChefHat className="w-8 h-8 text-orange-600" />
           </div>
-          <h3 className="text-2xl font-bold text-white mb-2">Welcome to ChefAI</h3>
-          <p className="text-zinc-400">Please sign in with your Gmail to continue your culinary journey.</p>
+          <div>
+            <h3 className="text-2xl font-bold text-white mb-2">Welcome to Chef AI</h3>
+            <p className="text-zinc-400">Chef AI manages your kitchen, crafts professional recipes tailored to your unique taste.</p>
+            <p className="text-zinc-500 text-xs mt-4 italic">Please sign in with your Gmail account to continue.</p>
+          </div>
         </div>
 
         <div className="space-y-4">
@@ -567,7 +570,7 @@ function LandingPage({ onLogin }: { onLogin: (targetTab?: string) => void }) {
       <nav className="relative z-20 max-w-7xl mx-auto px-6 w-full h-20 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ChefHat className="w-8 h-8 text-orange-600" />
-          <span className="text-2xl font-bold tracking-tighter">CHEF<span className="text-orange-600">AI</span></span>
+          <span className="text-2xl font-bold tracking-tighter">CHEF <span className="text-orange-600">AI</span></span>
         </div>
         <Button onClick={() => onLogin('dashboard')} className="rounded-full px-8 relative z-30">
           Get Started
@@ -589,7 +592,7 @@ function LandingPage({ onLogin }: { onLogin: (targetTab?: string) => void }) {
               <span className="text-orange-600">Kitchen.</span>
             </h1>
             <p className="text-xl text-zinc-400 max-w-lg mb-10 leading-relaxed">
-              ChefAI helps you manage your ingredients, discovers recipes you'll love, and provides expert cooking advice tailored to your unique tastes.
+              Chef AI manages your kitchen, crafts professional recipes tailored to your unique taste.
             </p>
             <Button size="lg" onClick={() => onLogin('chat')} className="rounded-full px-10 relative z-30">
               Start Cooking <ArrowRight className="ml-2 w-5 h-5" />
@@ -697,7 +700,7 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           <div className="relative z-10">
             <Badge className="mb-4">Chef's Inspiration</Badge>
             <h3 className="text-3xl font-bold mb-4">What are you craving?</h3>
-            <p className="text-zinc-400 mb-8 max-w-md text-lg">Let ChefAI suggest the perfect dish based on your mood and the local weather.</p>
+            <p className="text-zinc-400 mb-8 max-w-md text-lg">Chef AI manages your kitchen, crafts professional recipes tailored to your unique taste.</p>
             
             <div className="flex flex-wrap gap-4">
               {prediction ? (
@@ -1053,6 +1056,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
   const [chatBackground, setChatBackground] = useState<string | null>(localStorage.getItem('chefai_chat_bg'));
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -1096,10 +1100,13 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isSending]);
+    if (autoScroll) {
+      scrollToBottom();
+    }
+  }, [messages, isSending, autoScroll]);
 
   const speak = (text: string) => {
+    window.speechSynthesis.cancel(); // Stop any current speech
     const utterance = new SpeechSynthesisUtterance(text);
     window.speechSynthesis.speak(utterance);
   };
@@ -1143,7 +1150,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
     if (!isPro && uploadCount >= 3) {
       setMessages(prev => [...prev, {
         role: 'model',
-        content: "You have reached the free limit of 3 image uploads. Upgrade to Pro to unlock unlimited uploads and premium features!",
+        content: "You have reached the free limit of 3 image uploads. Upgrade to Pro to continue.",
         showUpgrade: true
       }]);
       return;
@@ -1261,6 +1268,18 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
           <Button 
             variant="ghost" 
             size="sm" 
+            onClick={() => setAutoScroll(!autoScroll)}
+            title={autoScroll ? "Disable Auto-scroll" : "Enable Auto-scroll"}
+            className={cn(
+              "rounded-full w-8 h-8 p-0",
+              autoScroll ? "text-orange-500 bg-orange-500/10" : "text-zinc-500"
+            )}
+          >
+            <ArrowRight className={cn("w-4 h-4 transition-transform", autoScroll ? "rotate-90" : "")} />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
             onClick={onRefresh}
             className="rounded-full w-8 h-8 p-0"
           >
@@ -1274,7 +1293,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
           <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-50">
             <ChefHat className="w-12 h-12 mb-4 text-orange-600" />
             <h3 className="text-xl font-bold mb-2">Welcome to Chef AI</h3>
-            <p className="text-sm max-w-xs">Ask me about any dish, upload an image of your fridge, or get a recipe for what you're craving!</p>
+            <p className="text-sm max-w-xs">Chef AI manages your kitchen, crafts professional recipes tailored to your unique taste.</p>
           </div>
         )}
         {messages.map((m, i) => (
@@ -1323,7 +1342,7 @@ function ChefChat({ user, messages, fridgeItems, savedRecipes, profile, subscrip
                   className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-orange-500 transition-colors font-medium"
                 >
                   <Volume2 className="w-3 h-3" />
-                  Listen
+                  Speak
                 </button>
               )}
             </div>
