@@ -49,6 +49,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { generateRecipe, predictCraving, analyzeTasteDNA, chatWithChef, searchRecipeByName, Recipe } from './services/geminiService';
+import { runCravingClassifier } from './lib/mlModel';
 import { resizeImage } from './lib/imageUtils';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -640,21 +641,54 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
   const [prediction, setPrediction] = useState<any>(null);
   const [isPredicting, setIsPredicting] = useState(false);
 
+  // Machine Learning inputs
+  const [selectedMood, setSelectedMood] = useState("Cozy");
+  const [selectedWeather, setSelectedWeather] = useState("Rainy");
+  const [selectedTimeOfDay, setSelectedTimeOfDay] = useState(() => {
+    const hr = new Date().getHours();
+    if (hr < 11) return "Morning";
+    if (hr < 17) return "Afternoon";
+    if (hr < 21) return "Evening";
+    return "Night";
+  });
+
   const handlePredict = async () => {
     setIsPredicting(true);
     try {
-      const mood = "Happy"; 
-      const weather = "Sunny"; 
-      const dish = await predictCraving(mood, weather);
-      
-      const cravingData = {
-        mood,
-        weather,
-        predicted_dish: dish,
-        confidence: Math.floor(Math.random() * 20) + 75,
+      // 1. Gather User's Taste DNA from profile or fall back to default vectors
+      const mlInput = {
+        mood: selectedMood,
+        weather: selectedWeather,
+        timeOfDay: selectedTimeOfDay,
+        tasteDna: {
+          sweetness: userProfile?.taste_dna?.sweetness ?? 50,
+          saltiness: userProfile?.taste_dna?.saltiness ?? 50,
+          spiciness: userProfile?.taste_dna?.spiciness ?? 50,
+          umami: userProfile?.taste_dna?.umami ?? 50,
+          acidity: userProfile?.taste_dna?.acidity ?? 50,
+        }
       };
 
-      await api.addCraving(user.id, cravingData);
+      // 2. Run the pure TypeScript Machine Learning vector classifier locally!
+      const mlResult = runCravingClassifier(mlInput);
+      
+      const cravingData = {
+        mood: selectedMood,
+        weather: selectedWeather,
+        predicted_dish: mlResult.dishName,
+        confidence: mlResult.confidence,
+        matching_vector: mlResult.matchingVector,
+        reason: mlResult.reason,
+      };
+
+      // 3. Persist prediction in SQLite
+      await api.addCraving(user.id, {
+        mood: selectedMood,
+        weather: selectedWeather,
+        predicted_dish: mlResult.dishName,
+        confidence: mlResult.confidence
+      });
+
       setPrediction(cravingData);
       onRefresh();
     } catch (e: any) {
@@ -697,38 +731,139 @@ function Dashboard({ user, fridgeItems, cravings, userProfile, onNavigate, subsc
           <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
             <ChefHat className="w-48 h-48 text-orange-600" />
           </div>
-          <div className="relative z-10">
-            <Badge className="mb-4">Chef's Inspiration</Badge>
-            <h3 className="text-3xl font-bold mb-4">What are you craving?</h3>
-            <p className="text-zinc-400 mb-8 max-w-md text-lg">Chef AI manages your kitchen, crafts professional recipes tailored to your unique taste.</p>
+          <div className="relative z-10 w-full">
+            <Badge className="mb-4">Chef's Inspiration Engine</Badge>
+            <h3 className="text-3xl font-bold mb-4">Craving Classifier</h3>
+            <p className="text-zinc-400 mb-6 text-base">Select your current attributes to run our client-side machine learning vector models on your Taste DNA.</p>
             
-            <div className="flex flex-wrap gap-4">
-              {prediction ? (
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-orange-600/10 border border-orange-600/20 rounded-2xl p-6 mb-2 max-w-md w-full"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">Chef's Recommendation</span>
-                    <span className="text-[10px] font-medium text-zinc-500">{prediction.confidence}% Match</span>
+            {!prediction ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div>
+                    <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider block mb-2">Your Current Mood</label>
+                    <select 
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none"
+                      value={selectedMood}
+                      onChange={e => setSelectedMood(e.target.value)}
+                    >
+                      <option value="Happy">😊 Happy & Excited</option>
+                      <option value="Tired">😴 Tired & Exhausted</option>
+                      <option value="Stressed">🤯 Stressed & Busy</option>
+                      <option value="Energetic">⚡ Active & Energetic</option>
+                      <option value="Cozy">☕ Relaxed & Cozy</option>
+                      <option value="Adventurous">🌍 Fun & Adventurous</option>
+                    </select>
                   </div>
-                  <p className="text-3xl font-bold text-white mb-4">{prediction.predicted_dish}</p>
+                  <div>
+                    <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider block mb-2">Current Weather</label>
+                    <select 
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none"
+                      value={selectedWeather}
+                      onChange={e => setSelectedWeather(e.target.value)}
+                    >
+                      <option value="Sunny">☀️ Warm & Sunny</option>
+                      <option value="Rainy">🌧️ Wet & Rainy</option>
+                      <option value="Cold">❄️ Chilly & Cold</option>
+                      <option value="Hot">🥵 Scorching Hot</option>
+                      <option value="Cloudy">☁️ Overcast & Cloudy</option>
+                      <option value="Snowy">☃️ Snowy & Frozen</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider block mb-2">Time of Day</label>
+                    <select 
+                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none"
+                      value={selectedTimeOfDay}
+                      onChange={e => setSelectedTimeOfDay(e.target.value)}
+                    >
+                      <option value="Morning">🌅 Morning Cuisine</option>
+                      <option value="Afternoon">☀️ Mid-Day Lunch</option>
+                      <option value="Evening">🌌 Elegant Evening Dinner</option>
+                      <option value="Night">🌙 Late Night Cravings</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <Button onClick={handlePredict} disabled={isPredicting} size="lg" className="rounded-full px-8">
+                    {isPredicting ? 'Running ML Models...' : 'Predict My Craving'}
+                    <Sparkles className="ml-2 w-5 h-5" />
+                  </Button>
+                  <Button variant="secondary" size="lg" onClick={() => onNavigate('chat')} className="rounded-full px-8">
+                    Start Cooking <ChefHat className="ml-2 w-5 h-5" />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-orange-600/5 border border-orange-600/20 rounded-2xl p-6 w-full text-left"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b border-zinc-900 pb-4">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500 block mb-1">ML Craigslist Classifier Predictor</span>
+                    <h4 className="text-2xl font-bold text-white mb-2">{prediction.predicted_dish}</h4>
+                    <p className="text-sm text-zinc-400 italic font-medium leading-relaxed">{prediction.reason}</p>
+                  </div>
+                  <div className="bg-orange-600 text-white px-3 py-1.5 rounded-full text-xs font-bold text-center self-start md:self-center">
+                    Confidence score: {prediction.confidence}%
+                  </div>
+                </div>
+
+                {/* Vectors Breakup */}
+                <div className="mb-6">
+                  <h5 className="text-xs text-zinc-400 font-bold uppercase tracking-wider mb-3">Feature Alignment score</h5>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Mood Fit</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 bg-zinc-800 rounded-full w-full overflow-hidden">
+                          <div className="h-full bg-orange-600 rounded-full" style={{ width: `${prediction.matching_vector?.moodFit ?? 75}%` }} />
+                        </div>
+                        <span className="text-xs text-zinc-300 font-mono">{prediction.matching_vector?.moodFit ?? 75}%</span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Weather Fit</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 bg-zinc-800 rounded-full w-full overflow-hidden">
+                          <div className="h-full bg-amber-500 rounded-full" style={{ width: `${prediction.matching_vector?.weatherFit ?? 80}%` }} />
+                        </div>
+                        <span className="text-xs text-zinc-300 font-mono">{prediction.matching_vector?.weatherFit ?? 80}%</span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Taste DNA Fit</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 bg-zinc-800 rounded-full w-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${prediction.matching_vector?.tasteFit ?? 85}%` }} />
+                        </div>
+                        <span className="text-xs text-zinc-300 font-mono">{prediction.matching_vector?.tasteFit ?? 85}%</span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Time Suitability</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 bg-zinc-800 rounded-full w-full overflow-hidden">
+                          <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${prediction.matching_vector?.timeFit ?? 90}%` }} />
+                        </div>
+                        <span className="text-xs text-zinc-300 font-mono">{prediction.matching_vector?.timeFit ?? 90}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4">
                   <Button size="sm" onClick={() => onNavigate('recipes')} className="rounded-full">
                     Get Recipe <ChevronRight className="ml-1 w-4 h-4" />
                   </Button>
-                </motion.div>
-              ) : (
-                <Button onClick={handlePredict} disabled={isPredicting} size="lg" className="rounded-full px-8">
-                  {isPredicting ? 'Analyzing...' : 'Predict My Craving'}
-                  <Sparkles className="ml-2 w-5 h-5" />
-                </Button>
-              )}
-              
-              <Button variant="secondary" size="lg" onClick={() => onNavigate('chat')} className="rounded-full px-8">
-                Start Cooking <ChefHat className="ml-2 w-5 h-5" />
-              </Button>
-            </div>
+                  <Button variant="ghost" size="sm" onClick={() => setPrediction(null)} className="text-xs text-zinc-400 hover:text-white">
+                    Recalculate Cravings
+                  </Button>
+                </div>
+              </motion.div>
+            )}
           </div>
         </Card>
 
@@ -885,9 +1020,25 @@ function FridgeManager({ user, items, onRefresh, onError }: { user: any, items: 
   );
 }
 
+function parseMinutes(timeStr: string): number {
+  if (!timeStr) return 30;
+  const num = parseInt(timeStr.replace(/[^0-9]/g, ''));
+  if (isNaN(num)) return 30;
+  if (timeStr.toLowerCase().includes('hr') || timeStr.toLowerCase().includes('hour')) {
+    return num * 60;
+  }
+  return num;
+}
+
 function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefresh, onError }: { user: any, fridgeItems: any[], savedRecipes: any[], userProfile: any, onRefresh: () => void, onError: (msg: string) => void }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRecipe, setGeneratedRecipe] = useState<Recipe | null>(null);
+
+  // Filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [maxTime, setMaxTime] = useState("all");
+  const [difficulty, setDifficulty] = useState("all");
+  const [dietPreference, setDietPreference] = useState("all");
 
   const handleGenerate = async () => {
     if (fridgeItems.length === 0) {
@@ -918,6 +1069,47 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
       onError(e.message || "Failed to save recipe");
     }
   };
+
+  const filteredRecipes = savedRecipes.filter(recipe => {
+    // 1. Search Query filter (case insensitive)
+    const matchesSearch = searchQuery === "" || 
+      recipe.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      recipe.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (recipe.ingredients && recipe.ingredients.some(i => i.toLowerCase().includes(searchQuery.toLowerCase())));
+
+    // 2. Time filter
+    let matchesTime = true;
+    if (maxTime !== "all") {
+      const minutes = parseMinutes(recipe.time);
+      if (maxTime === "quick" && minutes > 20) matchesTime = false;
+      if (maxTime === "medium" && (minutes <= 20 || minutes > 45)) matchesTime = false;
+      if (maxTime === "slow" && minutes <= 45) matchesTime = false;
+    }
+
+    // 3. Difficulty filter
+    const matchesDifficulty = difficulty === "all" || 
+      recipe.difficulty.toLowerCase() === difficulty.toLowerCase();
+
+    // 4. Dietary preference filter
+    let matchesDiet = true;
+    if (dietPreference !== "all") {
+      const textToSearch = `${recipe.title} ${recipe.description} ${recipe.ingredients?.join(' ') || ''}`.toLowerCase();
+      if (dietPreference === "vegetarian" && !textToSearch.includes("vegetarian") && !textToSearch.includes("veg")) {
+        matchesDiet = false;
+      }
+      if (dietPreference === "vegan" && !textToSearch.includes("vegan")) {
+        matchesDiet = false;
+      }
+      if (dietPreference === "gluten-free" && !textToSearch.includes("gluten-free") && !textToSearch.includes("sans gluten")) {
+        matchesDiet = false;
+      }
+      if (dietPreference === "low-carb" && !textToSearch.includes("low-carb") && !textToSearch.includes("keto")) {
+        matchesDiet = false;
+      }
+    }
+
+    return matchesSearch && matchesTime && matchesDifficulty && matchesDiet;
+  });
 
   return (
     <div className="space-y-8">
@@ -957,30 +1149,114 @@ function RecipeExplorer({ user, fridgeItems, savedRecipes, userProfile, onRefres
         </Card>
       )}
 
+      {/* Filter Options */}
+      <Card className="p-6 bg-zinc-950/40 border-zinc-800">
+        <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <Search className="w-5 h-5 text-orange-500" /> Filter Saved Recipes
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Search</label>
+            <input 
+              type="text" 
+              placeholder="Search by ingredients or name..." 
+              className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:border-orange-600 outline-none text-zinc-200"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Cooking Time</label>
+            <select 
+              className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:border-orange-600 outline-none text-zinc-300"
+              value={maxTime}
+              onChange={e => setMaxTime(e.target.value)}
+            >
+              <option value="all">All Times</option>
+              <option value="quick">Quick (≤ 20 mins)</option>
+              <option value="medium">Medium (21-45 mins)</option>
+              <option value="slow">Slow (over 45 mins)</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Difficulty</label>
+            <select 
+              className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:border-orange-600 outline-none text-zinc-300"
+              value={difficulty}
+              onChange={e => setDifficulty(e.target.value)}
+            >
+              <option value="all">All Difficulties</option>
+              <option value="Easy">Easy</option>
+              <option value="Medium">Medium</option>
+              <option value="Hard">Hard</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Dietary Preferences</label>
+            <select 
+              className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:border-orange-600 outline-none text-zinc-300"
+              value={dietPreference}
+              onChange={e => setDietPreference(e.target.value)}
+            >
+              <option value="all">All Dietary Preferences</option>
+              <option value="vegetarian">Vegetarian</option>
+              <option value="vegan">Vegan</option>
+              <option value="gluten-free">Gluten-Free</option>
+              <option value="low-carb">Keto / Low Carb</option>
+            </select>
+          </div>
+        </div>
+        {(searchQuery || maxTime !== "all" || difficulty !== "all" || dietPreference !== "all") && (
+          <div className="mt-4 flex justify-between items-center">
+            <span className="text-xs text-zinc-500">Found {filteredRecipes.length} matching recipes</span>
+            <Button 
+              variant="ghost" 
+              size="sm"
+              onClick={() => {
+                setSearchQuery("");
+                setMaxTime("all");
+                setDifficulty("all");
+                setDietPreference("all");
+              }}
+              className="text-xs text-zinc-400 hover:text-white"
+            >
+              Clear Filters
+            </Button>
+          </div>
+        )}
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {savedRecipes.map(recipe => (
-          <Card key={recipe.id}>
-            <div className="flex justify-between items-start mb-4">
-              <h4 className="text-xl font-bold">{recipe.title}</h4>
-              <Button variant="ghost" size="sm" onClick={async () => {
-                try {
-                  await api.deleteRecipe(recipe.id);
-                  onRefresh();
-                } catch (e: any) {
-                  console.error(e);
-                  onError(e.message || "Failed to delete recipe");
-                }
-              }}>
-                <Trash2 className="w-4 h-4 text-red-500" />
-              </Button>
-            </div>
-            <p className="text-sm text-zinc-500 line-clamp-2 mb-4">{recipe.description}</p>
-            <div className="flex items-center gap-4 text-xs text-zinc-600">
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {recipe.time}</span>
-              <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> {recipe.difficulty}</span>
-            </div>
-          </Card>
-        ))}
+        {filteredRecipes.length > 0 ? (
+          filteredRecipes.map(recipe => (
+            <Card key={recipe.id}>
+              <div className="flex justify-between items-start mb-4">
+                <h4 className="text-xl font-bold">{recipe.title}</h4>
+                <Button variant="ghost" size="sm" onClick={async () => {
+                  try {
+                    await api.deleteRecipe(recipe.id);
+                    onRefresh();
+                  } catch (e: any) {
+                    console.error(e);
+                    onError(e.message || "Failed to delete recipe");
+                  }
+                }}>
+                  <Trash2 className="w-4 h-4 text-red-500" />
+                </Button>
+              </div>
+              <p className="text-sm text-zinc-500 line-clamp-2 mb-4">{recipe.description}</p>
+              <div className="flex items-center gap-4 text-xs text-zinc-600">
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {recipe.time}</span>
+                <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> {recipe.difficulty}</span>
+              </div>
+            </Card>
+          ))
+        ) : (
+          <div className="col-span-2 text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-3xl">
+            <p className="text-lg">No recipes match your filter criteria.</p>
+            <p className="text-sm text-zinc-600 mt-1">Try resetting the filters or add more from the generator!</p>
+          </div>
+        )}
       </div>
     </div>
   );
